@@ -5,7 +5,7 @@ use thiserror::Error;
 use std::collections::HashMap;
 use crate::engine::constants;
 use crate::engine::deck::Deck;
-use crate::engine::models::{CardKind, GameConfig, Player};
+use crate::engine::models::{CardKind, GameConfig, Player, PlayerPublic};
 
 #[derive(Debug, Error)]
 pub enum GameError {
@@ -25,6 +25,17 @@ pub enum PassDirection {
 pub enum PlayerTurnState {
     NotSelected,
     Selected,
+}
+
+/// Public game status information
+#[derive(Debug, Clone)]
+pub struct GameStatus {
+    pub round: usize,
+    pub turn: usize,
+    pub round_count: usize,
+    pub pass_direction: PassDirection,
+    pub is_game_over: bool,
+    pub player_turn_states: Vec<PlayerTurnState>,
 }
 
 pub struct Game {
@@ -258,6 +269,65 @@ impl Game {
 
     pub fn is_game_over(&self) -> bool {
         self.round >= self.round_count && self.players.iter().all(|p| p.hand.is_empty())
+    }
+
+    // Public API methods
+    
+    /// Get current player's hand
+    pub fn get_player_hand(&self, player_id: usize) -> Result<&HashMap<CardKind, usize>, GameError> {
+        if player_id >= self.players.len() {
+            return Err(GameError::InvalidConfig);
+        }
+        Ok(&self.players[player_id].hand)
+    }
+
+    /// Get all players' public information
+    pub fn get_players_public(&self) -> Vec<PlayerPublic> {
+        self.players.iter().map(|p| p.to_public()).collect()
+    }
+
+    /// Get a specific player's public information
+    pub fn get_player_public(&self, player_id: usize) -> Result<PlayerPublic, GameError> {
+        if player_id >= self.players.len() {
+            return Err(GameError::InvalidConfig);
+        }
+        Ok(self.players[player_id].to_public())
+    }
+
+    /// Get current game status
+    pub fn get_game_status(&self) -> GameStatus {
+        GameStatus {
+            round: self.round,
+            turn: self.turn,
+            round_count: self.round_count,
+            pass_direction: self.get_current_pass_direction(),
+            is_game_over: self.is_game_over(),
+            player_turn_states: self.player_turn_states.clone(),
+        }
+    }
+
+    /// Get current round number
+    pub fn get_round(&self) -> usize {
+        self.round
+    }
+
+    /// Get current turn number
+    pub fn get_turn(&self) -> usize {
+        self.turn
+    }
+
+    /// Get number of players
+    pub fn num_players(&self) -> usize {
+        self.players.len()
+    }
+
+
+    /// Get player turn state
+    pub fn get_player_turn_state(&self, player_id: usize) -> Result<PlayerTurnState, GameError> {
+        if player_id >= self.player_turn_states.len() {
+            return Err(GameError::InvalidConfig);
+        }
+        Ok(self.player_turn_states[player_id])
     }
 
     // distribute new cards to players
