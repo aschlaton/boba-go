@@ -1,11 +1,12 @@
-use crate::engine::models::cards::Card;
+use std::collections::HashMap;
+use crate::engine::models::cards::CardKind;
 
 #[derive(Debug, Clone)]
 pub struct Player {
     pub id: usize,
     pub username: String,
-    pub hand: Vec<Card>,
-    pub public_cards: Vec<Card>,
+    pub hand: HashMap<CardKind, usize>,
+    pub public_cards: HashMap<CardKind, usize>,
 }
 
 impl Player {
@@ -22,6 +23,6 @@ impl Player {
 pub struct PlayerPublic {
     pub id: usize,
     pub name: String,
-    pub public_cards: Vec<Card>,
+    pub public_cards: HashMap<CardKind, usize>,
 }
 

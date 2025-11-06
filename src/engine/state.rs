@@ -1,10 +1,11 @@
-use rand::prelude::SliceRandom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use thiserror::Error;
 
+use std::collections::HashMap;
 use crate::engine::constants;
-use crate::engine::models::{Card, CardKind, GameConfig, Player};
+use crate::engine::deck::Deck;
+use crate::engine::models::{CardKind, GameConfig, Player};
 
 #[derive(Debug, Error)]
 pub enum GameError {
@@ -29,7 +30,7 @@ pub enum PlayerTurnState {
 pub struct Game {
     pub seed: u64,
     rng: ChaCha8Rng,
-    pub deck: Vec<Card>,
+    deck: Deck,
     pub players: Vec<Player>,
     pub round: usize,
     pub turn: usize,
@@ -57,14 +58,17 @@ impl Game {
         let seed = config.seed.unwrap_or_else(rand::random);
         let rng = ChaCha8Rng::seed_from_u64(seed);
         
-        let mut players: Vec<Player> = config.player_names
+        // Extract card distribution before moving config
+        let card_distribution = config.card_distribution.clone();
+        
+        let players: Vec<Player> = config.player_names
             .into_iter()
             .enumerate()
             .map(|(id, username)| Player {
                 id,
                 username,
-                hand: Vec::new(),
-                public_cards: Vec::new(),
+                hand: HashMap::new(),
+                public_cards: HashMap::new(),
             })
             .collect();
 
@@ -73,15 +77,15 @@ impl Game {
         let mut game = Game {
             seed,
             rng,
-            deck: Vec::new(),
+            deck: Deck::new(),
             players: Vec::new(),
             round: 1,
             turn: 1,
             player_turn_states,
             round_count: config.round_count,
         };
-        
-        game.deck = game.build_deck();
+
+        game.build_deck(card_distribution);
         game.players = players;
         game.distribute_cards(cards_per_player)?;
         Ok(game)
@@ -92,17 +96,18 @@ impl Game {
     fn distribute_cards(&mut self, cards_per_player: usize) -> Result<(), GameError> {
         let num_players = self.players.len();
         let total_cards_needed = num_players * cards_per_player;
-        if self.deck.len() < total_cards_needed {
+        if self.deck.size() < total_cards_needed {
             return Err(GameError::NotEnoughCards);
         }
 
-        for (i, player) in self.players.iter_mut().enumerate() {
-            let start = i * cards_per_player;
-            let end: usize = start + cards_per_player;
-            player.hand.extend_from_slice(&self.deck[start..end]);
+        for player in self.players.iter_mut() {
+            for _ in 0..cards_per_player {
+                if let Some(card) = self.deck.draw(&mut self.rng) {
+                    *player.hand.entry(card).or_insert(0) += 1;
+                }
+            }
         }
 
-        self.deck = self.deck.split_off(total_cards_needed);
         Ok(())
     }
 
@@ -110,6 +115,7 @@ impl Game {
         Self::get_pass_direction(self.round)
     }
 
+    //passes cards to next player
     pub fn pass_hands(&mut self) {
         let direction = self.get_current_pass_direction();
         let num_players = self.players.len();
@@ -132,20 +138,30 @@ impl Game {
         }
     }
     
-    pub fn validate_hand_submission(&self, player_id: usize, final_hand: &[Card]) -> Result<(), GameError> {
+    pub fn validate_hand_submission(&self, player_id: usize, final_hand: &HashMap<CardKind, usize>) -> Result<(), GameError> {
         if player_id >= self.players.len() {
             return Err(GameError::InvalidConfig);
         }
         
-        let current_hand_size = self.players[player_id].hand.len();
+        let current_hand_size: usize = self.players[player_id].hand.values().sum();
+        let final_hand_size: usize = final_hand.values().sum();
         
-        if final_hand.len() != current_hand_size - 1 {
+        if final_hand_size != current_hand_size - 1 {
             return Err(GameError::InvalidConfig);
+        }
+        
+        for (kind, count) in final_hand {
+            let current_count = self.players[player_id].hand.get(kind).copied().unwrap_or(0);
+            if *count > current_count {
+                return Err(GameError::InvalidConfig);
+            }
         }
         
         Ok(())
     }
-
+    
+    // marks player as selected for current turn
+    // use when player confirms card to submit
     pub fn mark_player_selected(&mut self, player_id: usize) -> Result<(), GameError> {
         if player_id >= self.player_turn_states.len() {
             return Err(GameError::InvalidConfig);
@@ -164,34 +180,70 @@ impl Game {
         }
     }
 
-    pub fn process_turn(&mut self, pending_hands: Vec<Option<Vec<Card>>>) -> Result<(), GameError> {
+    pub fn process_turn(
+        &mut self,
+        submissions: Vec<Option<(HashMap<CardKind, usize>, HashMap<CardKind, usize>)>>
+    ) -> Result<(), GameError> {
         if !self.all_players_selected() {
             return Err(GameError::InvalidConfig);
         }
 
-        if pending_hands.len() != self.players.len() {
+        if submissions.len() != self.players.len() {
             return Err(GameError::InvalidConfig);
         }
 
-        for (player_id, pending_hand_opt) in pending_hands.iter().enumerate() {
-            if let Some(final_hand) = pending_hand_opt {
-                let current_hand = &self.players[player_id].hand;
-                let selected_cards: Vec<Card> = current_hand
-                    .iter()
-                    .filter(|card| !final_hand.contains(card))
-                    .cloned()
-                    .collect();
-                
-                for card in &selected_cards {
-                    self.players[player_id].public_cards.push(card.clone());
+        // move selected cards to public_cards and track which cards have on_draft
+        let mut cards_with_on_draft: Vec<Option<CardKind>> = vec![None; self.players.len()];
+        
+        for (player_id, submission_opt) in submissions.iter().enumerate() {
+            if let Some((selected_cards, remaining_hand)) = submission_opt {
+                let player = &mut self.players[player_id];
+
+                // Add selected cards to public_cards
+                for (kind, count) in selected_cards {
+                    *player.public_cards.entry(*kind).or_insert(0) += count;
+                    
+                    // Track if this card has on_draft action
+                    if kind.on_draft().is_some() {
+                        cards_with_on_draft[player_id] = Some(*kind);
+                    }
                 }
-                
-                self.players[player_id].hand = final_hand.clone();
+
+                // Update player's hand to remaining hand (NOT transformed yet)
+                player.hand = remaining_hand.clone();
             }
         }
 
         self.pass_hands();
+
+        // process on_draft actions 
+        let direction = self.get_current_pass_direction();
+        let num_players = self.players.len();
         
+        let mut hands: Vec<HashMap<CardKind, usize>> = self.players.iter().map(|p| p.hand.clone()).collect();
+        
+        for (player_id, card_kind_opt) in cards_with_on_draft.iter().enumerate() {
+            if let Some(card_kind) = card_kind_opt {
+                if let Some(on_draft_fn) = card_kind.on_draft() {
+                    on_draft_fn(
+                        player_id,
+                        num_players,
+                        direction,
+                        &mut hands,
+                        &mut self.deck,
+                        &mut self.rng
+                    )
+                    .map_err(|_| GameError::InvalidConfig)?;
+                }
+            }
+        }
+        
+        // Sync hands back to players
+        for (i, player) in self.players.iter_mut().enumerate() {
+            player.hand = hands[i].clone();
+        }
+
+        // check if round is over or continue to next turn
         let all_hands_empty = self.players.iter().all(|p| p.hand.is_empty());
         if all_hands_empty {
             if self.round < self.round_count {
@@ -200,7 +252,7 @@ impl Game {
         } else {
             self.next_turn();
         }
-        
+
         Ok(())
     }
 
@@ -231,21 +283,27 @@ impl Game {
     }
 
     // shuffle deck
-    // TODO: probably add some way to configure card counts
-    fn build_deck(&mut self) -> Vec<Card> {
-        use CardKind::*;
-        let mut kinds = Vec::<CardKind>::new();
-        kinds.extend(std::iter::repeat(TapiocaPearl).take(14));
-        kinds.extend(std::iter::repeat(BrownSugarMilkTea).take(14));
-        kinds.extend(std::iter::repeat(ThaiTea).take(12));
-        kinds.extend(std::iter::repeat(MochiIceCream).take(8));
-        kinds.extend(std::iter::repeat(Matcha).take(10));
-        kinds.extend(std::iter::repeat(AloeJelly).take(10));
-
-        let mut deck: Vec<Card> = kinds.into_iter().enumerate()
-            .map(|(i, k)| Card { id: i as u32, kind: k })
-            .collect();
-        deck.shuffle(&mut self.rng);
-        deck
+    fn build_deck(&mut self, distribution_opt: Option<HashMap<CardKind, usize>>) {
+        let distribution = distribution_opt.unwrap_or_else(|| {
+            // Fallback to default if not provided
+            use CardKind::*;
+            let mut dist = HashMap::new();
+            dist.insert(TapiocaPearl, 14);
+            dist.insert(BrownSugarMilkTea, 14);
+            dist.insert(ThaiTea, 12);
+            dist.insert(MochiIceCream, 8);
+            dist.insert(Matcha, 10);
+            dist.insert(AloeJelly, 10);
+            dist.insert(MysteryTea, 6);
+            dist
+        });
+        
+        // Set initial distribution for auto-reshuffle
+        self.deck.set_initial_distribution(distribution.clone());
+        
+        // Add cards to deck
+        for (kind, count) in distribution {
+            self.deck.add(kind, count);
+        }
     }
 }
