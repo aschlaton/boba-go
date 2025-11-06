@@ -18,8 +18,11 @@ impl Default for GameConfig {
         default_distribution.insert(ThaiTea, 12);
         default_distribution.insert(MochiIceCream, 8);
         default_distribution.insert(Matcha, 10);
-        default_distribution.insert(AloeJelly, 10);
         default_distribution.insert(MysteryTea, 6);
+        default_distribution.insert(PoppingBubbles, 10);
+        default_distribution.insert(MangoTea, 10);
+        default_distribution.insert(LycheeTea, 10);
+        default_distribution.insert(PassionFruitTea, 10);
         
         Self {
             player_names: Vec::new(),

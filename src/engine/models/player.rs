@@ -7,6 +7,8 @@ pub struct Player {
     pub username: String,
     pub hand: HashMap<CardKind, usize>,
     pub public_cards: HashMap<CardKind, usize>,
+    /// Tracks how many of each fruit tea card are boosted by Popping Bubbles
+    pub boosted_fruit_teas: HashMap<CardKind, usize>,
 }
 
 impl Player {
@@ -15,6 +17,7 @@ impl Player {
             id: self.id,
             name: self.username.clone(),
             public_cards: self.public_cards.clone(),
+            boosted_fruit_teas: self.boosted_fruit_teas.clone(),
         }
     }
 }
@@ -24,5 +27,6 @@ pub struct PlayerPublic {
     pub id: usize,
     pub name: String,
     pub public_cards: HashMap<CardKind, usize>,
+    pub boosted_fruit_teas: HashMap<CardKind, usize>,
 }
 

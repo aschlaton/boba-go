@@ -4,5 +4,7 @@ pub struct ThaiTea;
 
 impl Card for ThaiTea {
     const NAME: &'static str = "Thai Tea";
-    const SCORE: u32 = 0;
+    const DESCRIPTION: &'static str = "+2 points. Each set of 3 unique non-fruit teas gives a +5 bonus!";
+    const FLAVOR_TEXT: &'static str = "placeholder";
+    const SCORE: u32 = 2;
 }

@@ -20,8 +20,14 @@ pub type OnDraftActionFn = fn(
 /// Card trait - all cards must implement this
 pub trait Card {
     const NAME: &'static str;
+    const DESCRIPTION: &'static str;
+    const FLAVOR_TEXT: &'static str;
     const SCORE: u32;
     const PLAYABLE: bool = true;
+    
+    fn is_fruit_tea() -> bool {
+        false
+    }
 
     fn on_draft() -> Option<OnDraftActionFn> {
         None

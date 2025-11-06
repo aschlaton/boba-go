@@ -1,10 +1,11 @@
 use super::base::Card;
 
-pub struct TapiocaPearl;
+pub struct PoppingBubbles;
 
-impl Card for TapiocaPearl {
-    const NAME: &'static str = "Tapioca Pearl";
+impl Card for PoppingBubbles {
+    const NAME: &'static str = "Popping Bubbles";
     const DESCRIPTION: &'static str = "placeholder";
     const FLAVOR_TEXT: &'static str = "placeholder";
     const SCORE: u32 = 0;
 }
+

@@ -38,6 +38,38 @@ pub struct GameStatus {
     pub player_turn_states: Vec<PlayerTurnState>,
 }
 
+/// Score contribution from a category
+#[derive(Debug, Clone)]
+pub struct CategoryScore {
+    pub category: String,
+    pub points: u32,
+}
+
+/// Complete score breakdown for a player
+#[derive(Debug, Clone)]
+pub struct ScoreBreakdown {
+    pub category_scores: Vec<CategoryScore>,
+    pub set_bonuses: Vec<SetBonus>,  // For future set-based bonuses
+    pub total_score: u32,
+}
+
+/// Set bonus (e.g., 3 unique teas = +5)
+#[derive(Debug, Clone)]
+pub struct SetBonus {
+    pub description: String,
+    pub points: u32,
+}
+
+impl ScoreBreakdown {
+    pub fn new() -> Self {
+        Self {
+            category_scores: Vec::new(),
+            set_bonuses: Vec::new(),
+            total_score: 0,
+        }
+    }
+}
+
 pub struct Game {
     pub seed: u64,
     rng: ChaCha8Rng,
@@ -80,6 +112,7 @@ impl Game {
                 username,
                 hand: HashMap::new(),
                 public_cards: HashMap::new(),
+                boosted_fruit_teas: HashMap::new(),
             })
             .collect();
 
@@ -210,9 +243,38 @@ impl Game {
             if let Some((selected_cards, remaining_hand)) = submission_opt {
                 let player = &mut self.players[player_id];
 
-                // Add selected cards to public_cards
+                // Add selected cards to public_cards and handle Popping Bubbles pairing
                 for (kind, count) in selected_cards {
-                    *player.public_cards.entry(*kind).or_insert(0) += count;
+                    // If this is a fruit tea, check if there are available Popping Bubbles
+                    if kind.is_fruit_tea() {
+                        // Check current count of Popping Bubbles in public_cards (decreases as we pair them)
+                        let available_popping_bubbles = player.public_cards.get(&CardKind::PoppingBubbles).copied().unwrap_or(0);
+                        
+                        let to_boost = (*count).min(available_popping_bubbles);
+                        let remaining = *count - to_boost;
+                        
+                        // Add boosted fruit teas to boosted_fruit_teas (not public_cards)
+                        // Also remove the paired Popping Bubbles from public_cards
+                        if to_boost > 0 {
+                            *player.boosted_fruit_teas.entry(*kind).or_insert(0) += to_boost;
+                            
+                            // Remove paired Popping Bubbles from public_cards
+                            if let Some(popping_count) = player.public_cards.get_mut(&CardKind::PoppingBubbles) {
+                                *popping_count -= to_boost;
+                                if *popping_count == 0 {
+                                    player.public_cards.remove(&CardKind::PoppingBubbles);
+                                }
+                            }
+                        }
+                        
+                        // Add remaining (unboosted) fruit teas to public_cards
+                        if remaining > 0 {
+                            *player.public_cards.entry(*kind).or_insert(0) += remaining;
+                        }
+                    } else {
+                        // Non-fruit tea cards go to public_cards normally
+                        *player.public_cards.entry(*kind).or_insert(0) += count;
+                    }
                     
                     // Track if this card has on_draft action
                     if kind.on_draft().is_some() {
@@ -269,6 +331,53 @@ impl Game {
 
     pub fn is_game_over(&self) -> bool {
         self.round >= self.round_count && self.players.iter().all(|p| p.hand.is_empty())
+    }
+
+    /// Calculate score for a specific player based on their public cards
+    /// Returns both the total score and a detailed breakdown
+    pub fn calculate_player_score(&self, player_id: usize) -> Result<(u32, ScoreBreakdown), GameError> {
+        if player_id >= self.players.len() {
+            return Err(GameError::InvalidConfig);
+        }
+        
+        let player = &self.players[player_id];
+        let mut breakdown = ScoreBreakdown::new();
+        let mut total_score = 0u32;
+        
+        // Calculate base card scores by category (for now, each card type is its own category)
+        // First, score non-fruit-tea cards and unboosted fruit teas from public_cards
+        for (card_kind, count) in &player.public_cards {
+            if *count > 0 {
+                let points_per_card = card_kind.score();
+                let total_points = points_per_card * (*count as u32);
+                total_score += total_points;
+                
+                breakdown.category_scores.push(CategoryScore {
+                    category: card_kind.name().to_string(),
+                    points: total_points,
+                });
+            }
+        }
+        
+        // Then, score boosted fruit teas (which are only in boosted_fruit_teas, not public_cards)
+        for (card_kind, count) in &player.boosted_fruit_teas {
+            if *count > 0 {
+                let points_per_card = card_kind.score();
+                // Boosted fruit teas score 3x
+                let boosted_points = (points_per_card * 3) * (*count as u32);
+                total_score += boosted_points;
+                
+                breakdown.category_scores.push(CategoryScore {
+                    category: format!("{} (boosted)", card_kind.name()),
+                    points: boosted_points,
+                });
+            }
+        }
+        
+        // TODO: Add set bonuses here (e.g., BrownSugarMilkTea's 3 unique teas)
+        
+        breakdown.total_score = total_score;
+        Ok((total_score, breakdown))
     }
 
     // Public API methods
@@ -363,8 +472,11 @@ impl Game {
             dist.insert(ThaiTea, 12);
             dist.insert(MochiIceCream, 8);
             dist.insert(Matcha, 10);
-            dist.insert(AloeJelly, 10);
             dist.insert(MysteryTea, 6);
+            dist.insert(PoppingBubbles, 10);
+            dist.insert(MangoTea, 10);
+            dist.insert(LycheeTea, 10);
+            dist.insert(PassionFruitTea, 10);
             dist
         });
         
