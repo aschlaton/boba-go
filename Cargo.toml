@@ -7,3 +7,9 @@ edition = "2021"
 rand = "0.8"
 rand_chacha = "0.3"
 thiserror = "2"
+ratatui = { version = "0.29.0", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
+
+[[bin]]
+name = "boba_tui"
+path = "src/bin/boba_tui.rs"

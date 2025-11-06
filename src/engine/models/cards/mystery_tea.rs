@@ -10,7 +10,7 @@ pub struct MysteryTea;
 
 impl Card for MysteryTea {
     const NAME: &'static str = "Mystery Tea";
-    const DESCRIPTION: &'static str = "+1 point. Each set of 3 unique non-fruit teas gives a +5 bonus!";
+    const DESCRIPTION: &'static str = "+2 points. After drafting this card, the remaining cards in this hand are replaced with random  cards from the deck. Each set of 3 unique non-fruit teas gives a +5 bonus!";
     const FLAVOR_TEXT: &'static str = "placeholder";
     const SCORE: u32 = 2;
     const PLAYABLE: bool = false;
