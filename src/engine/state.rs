@@ -42,7 +42,7 @@ pub struct GameStatus {
 #[derive(Debug, Clone)]
 pub struct CategoryScore {
     pub category: String,
-    pub points: u32,
+    pub points: f32,
 }
 
 /// Complete score breakdown for a player
@@ -50,14 +50,14 @@ pub struct CategoryScore {
 pub struct ScoreBreakdown {
     pub category_scores: Vec<CategoryScore>,
     pub set_bonuses: Vec<SetBonus>,  // For future set-based bonuses
-    pub total_score: u32,
+    pub total_score: f32,
 }
 
 /// Set bonus (e.g., 3 unique teas = +5)
 #[derive(Debug, Clone)]
 pub struct SetBonus {
     pub description: String,
-    pub points: u32,
+    pub points: f32,
 }
 
 impl ScoreBreakdown {
@@ -65,7 +65,7 @@ impl ScoreBreakdown {
         Self {
             category_scores: Vec::new(),
             set_bonuses: Vec::new(),
-            total_score: 0,
+                total_score: 0.0,
         }
     }
 }
@@ -343,14 +343,14 @@ impl Game {
 
     /// Calculate score for a specific player based on their public cards
     /// Returns both the total score and a detailed breakdown
-    pub fn calculate_player_score(&self, player_id: usize) -> Result<(u32, ScoreBreakdown), GameError> {
+    pub fn calculate_player_score(&self, player_id: usize) -> Result<(f32, ScoreBreakdown), GameError> {
         if player_id >= self.players.len() {
             return Err(GameError::InvalidConfig);
         }
         
         let player = &self.players[player_id];
         let mut breakdown = ScoreBreakdown::new();
-        let mut total_score = 0u32;
+        let mut total_score: f32 = 0.0;
         
         // Base categories (excluding custom-scored ones)
         let (base_points, mut base_breakdown) = self.score_base_categories(player);
@@ -368,6 +368,12 @@ impl Game {
             breakdown.category_scores.push(mochi);
         }
 
+        // Cross-player: Tapioca Pearl (pudding-like)
+        if let Some(tapioca) = self.score_tapioca_pearl(player_id) {
+            total_score += tapioca.points;
+            breakdown.category_scores.push(tapioca);
+        }
+
         // Tea set bonus (non-fruit teas): Thai Tea, Matcha Tea, Brown Sugar Milk Tea, Mystery Tea
         if let Some(tea_set_bonus) = self.score_tea_set_bonus(player) {
             total_score += tea_set_bonus.points;
@@ -382,8 +388,8 @@ impl Game {
 
     // Score all public cards except those with custom scoring rules
     // Excludes: MochiIceCream (custom)
-    fn score_base_categories(&self, player: &Player) -> (u32, Vec<CategoryScore>) {
-        let mut total = 0u32;
+    fn score_base_categories(&self, player: &Player) -> (f32, Vec<CategoryScore>) {
+        let mut total: f32 = 0.0;
         let mut categories: Vec<CategoryScore> = Vec::new();
 
         for (card_kind, count) in &player.public_cards {
@@ -395,8 +401,8 @@ impl Game {
                 continue;
             }
 
-            let points_per_card = card_kind.score();
-            let points = points_per_card * (*count as u32);
+            let points_per_card = card_kind.score() as f32;
+            let points = points_per_card * (*count as f32);
             total += points;
             categories.push(CategoryScore { category: card_kind.name().to_string(), points });
         }
@@ -405,16 +411,16 @@ impl Game {
     }
 
     // Score boosted fruit teas (3x points); these are tracked separately
-    fn score_boosted_fruit_teas(&self, player: &Player) -> (u32, Vec<CategoryScore>) {
-        let mut total = 0u32;
+    fn score_boosted_fruit_teas(&self, player: &Player) -> (f32, Vec<CategoryScore>) {
+        let mut total: f32 = 0.0;
         let mut categories: Vec<CategoryScore> = Vec::new();
 
         for (card_kind, count) in &player.boosted_fruit_teas {
             if *count == 0 {
                 continue;
             }
-            let points_per_card = card_kind.score();
-            let boosted_points = (points_per_card * 3) * (*count as u32);
+            let points_per_card = card_kind.score() as f32;
+            let boosted_points = (points_per_card * 3.0) * (*count as f32);
             total += boosted_points;
             categories.push(CategoryScore { category: format!("{} (boosted)", card_kind.name()), points: boosted_points });
         }
@@ -437,11 +443,39 @@ impl Game {
             _ => 15,
         } as u32;
 
-        Some(CategoryScore { category: CardKind::MochiIceCream.name().to_string(), points })
+        Some(CategoryScore { category: CardKind::MochiIceCream.name().to_string(), points: points as f32 })
     }
 
-    // Tea set bonus: For non-fruit teas (Thai Tea, Matcha Tea, Brown Sugar Milk Tea, Mystery Tea)
-    // number_of_sets = min(most, second_most, third_most + fourth_most)
+    // Cross-player scoring for Tapioca Pearl (pudding-like):
+    // Most = +6 split evenly among ties; Least = -6 split evenly among ties; 2-player still penalizes least.
+    fn score_tapioca_pearl(&self, player_id: usize) -> Option<CategoryScore> {
+        let n = self.players.len();
+        if n == 0 { return None; }
+
+        let counts: Vec<usize> = self.players.iter()
+            .map(|p| p.public_cards.get(&CardKind::TapiocaPearl).copied().unwrap_or(0))
+            .collect();
+
+        let my_count = counts[player_id];
+        let &max_c = counts.iter().max()?;
+        let &min_c = counts.iter().min()?;
+
+        // Determine number of players tied for max and min
+        let max_ties = counts.iter().filter(|&&c| c == max_c).count();
+        let min_ties = counts.iter().filter(|&&c| c == min_c).count();
+
+        let mut points: f32 = 0.0;
+        if my_count == max_c && max_c > 0 { // award even if 0? Typically pudding awards even if 0; keep >0 to avoid odd case
+            points += 6.0 / (max_ties as f32);
+        }
+        if my_count == min_c {
+            points -= 6.0 / (min_ties as f32);
+        }
+
+        if points.abs() < f32::EPSILON { return None; }
+        Some(CategoryScore { category: "Tapioca Pearl Majority/Minority".to_string(), points })
+    }
+
     // each set grants +5 points
     fn score_tea_set_bonus(&self, player: &Player) -> Option<CategoryScore> {
         let counts = [
@@ -463,7 +497,7 @@ impl Game {
             return None;
         }
 
-        let points = (sets as u32) * 5;
+        let points = (sets as f32) * 5.0;
         Some(CategoryScore { category: "Tea Set Bonus".to_string(), points })
     }
 
