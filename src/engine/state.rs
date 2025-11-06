@@ -367,6 +367,12 @@ impl Game {
             total_score += mochi.points;
             breakdown.category_scores.push(mochi);
         }
+
+        // Tea set bonus (non-fruit teas): Thai Tea, Matcha Tea, Brown Sugar Milk Tea, Mystery Tea
+        if let Some(tea_set_bonus) = self.score_tea_set_bonus(player) {
+            total_score += tea_set_bonus.points;
+            breakdown.category_scores.push(tea_set_bonus);
+        }
         
         // TODO: Add set bonuses here (e.g., BrownSugarMilkTea's 3 unique teas)
         
@@ -416,7 +422,6 @@ impl Game {
         (total, categories)
     }
 
-    // Custom scoring for Mochi Ice Cream: 1/3/6/10/15 points for 1..=5+ copies (capped)
     fn score_mochi_ice_cream(&self, player: &Player) -> Option<CategoryScore> {
         let count = player.public_cards.get(&CardKind::MochiIceCream).copied().unwrap_or(0);
         if count == 0 {
@@ -424,7 +429,7 @@ impl Game {
         }
 
         let capped = count.min(5);
-        let points = match capped {
+        let points: u32 = match capped {
             1 => 1,
             2 => 3,
             3 => 6,
@@ -433,6 +438,33 @@ impl Game {
         } as u32;
 
         Some(CategoryScore { category: CardKind::MochiIceCream.name().to_string(), points })
+    }
+
+    // Tea set bonus: For non-fruit teas (Thai Tea, Matcha Tea, Brown Sugar Milk Tea, Mystery Tea)
+    // number_of_sets = min(most, second_most, third_most + fourth_most)
+    // each set grants +5 points
+    fn score_tea_set_bonus(&self, player: &Player) -> Option<CategoryScore> {
+        let counts = [
+            player.public_cards.get(&CardKind::ThaiTea).copied().unwrap_or(0),
+            player.public_cards.get(&CardKind::Matcha).copied().unwrap_or(0),
+            player.public_cards.get(&CardKind::BrownSugarMilkTea).copied().unwrap_or(0),
+            player.public_cards.get(&CardKind::MysteryTea).copied().unwrap_or(0),
+        ];
+
+        let mut counts_vec = counts.to_vec();
+        counts_vec.sort_unstable_by(|a, b| b.cmp(a)); // desc
+        let most = counts_vec.get(0).copied().unwrap_or(0);
+        let second = counts_vec.get(1).copied().unwrap_or(0);
+        let third = counts_vec.get(2).copied().unwrap_or(0);
+        let fourth = counts_vec.get(3).copied().unwrap_or(0);
+
+        let sets = most.min(second).min(third + fourth);
+        if sets == 0 {
+            return None;
+        }
+
+        let points = (sets as u32) * 5;
+        Some(CategoryScore { category: "Tea Set Bonus".to_string(), points })
     }
 
     // Public API methods
