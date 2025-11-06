@@ -182,6 +182,7 @@ impl Game {
         }
     }
     
+    // 
     pub fn validate_hand_submission(&self, player_id: usize, final_hand: &HashMap<CardKind, usize>) -> Result<(), GameError> {
         if player_id >= self.players.len() {
             return Err(GameError::InvalidConfig);
@@ -192,13 +193,6 @@ impl Game {
         
         if final_hand_size != current_hand_size - 1 {
             return Err(GameError::InvalidConfig);
-        }
-        
-        for (kind, count) in final_hand {
-            let current_count = self.players[player_id].hand.get(kind).copied().unwrap_or(0);
-            if *count > current_count {
-                return Err(GameError::InvalidConfig);
-            }
         }
         
         Ok(())
@@ -243,6 +237,21 @@ impl Game {
             if let Some((selected_cards, remaining_hand)) = submission_opt {
                 let player = &mut self.players[player_id];
 
+                // Check if player used Drink Tray (selected 2 cards)
+                let selected_count: usize = selected_cards.values().sum();
+                let used_drink_tray = selected_count == 2 && player.public_cards.get(&CardKind::DrinkTray).copied().unwrap_or(0) > 0;
+                
+                // If Drink Tray was used, remove it from public_cards
+                // (remaining_hand already includes Drink Tray from client)
+                if used_drink_tray {
+                    if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
+                        *drink_tray_count -= 1;
+                        if *drink_tray_count == 0 {
+                            player.public_cards.remove(&CardKind::DrinkTray);
+                        }
+                    }
+                }
+
                 // Add selected cards to public_cards and handle Popping Bubbles pairing
                 for (kind, count) in selected_cards {
                     // If this is a fruit tea, check if there are available Popping Bubbles
@@ -282,7 +291,6 @@ impl Game {
                     }
                 }
 
-                // Update player's hand to remaining hand (NOT transformed yet)
                 player.hand = remaining_hand.clone();
             }
         }
@@ -344,40 +352,87 @@ impl Game {
         let mut breakdown = ScoreBreakdown::new();
         let mut total_score = 0u32;
         
-        // Calculate base card scores by category (for now, each card type is its own category)
-        // First, score non-fruit-tea cards and unboosted fruit teas from public_cards
-        for (card_kind, count) in &player.public_cards {
-            if *count > 0 {
-                let points_per_card = card_kind.score();
-                let total_points = points_per_card * (*count as u32);
-                total_score += total_points;
-                
-                breakdown.category_scores.push(CategoryScore {
-                    category: card_kind.name().to_string(),
-                    points: total_points,
-                });
-            }
-        }
+        // Base categories (excluding custom-scored ones)
+        let (base_points, mut base_breakdown) = self.score_base_categories(player);
+        total_score += base_points;
+        breakdown.category_scores.append(&mut base_breakdown);
         
-        // Then, score boosted fruit teas (which are only in boosted_fruit_teas, not public_cards)
-        for (card_kind, count) in &player.boosted_fruit_teas {
-            if *count > 0 {
-                let points_per_card = card_kind.score();
-                // Boosted fruit teas score 3x
-                let boosted_points = (points_per_card * 3) * (*count as u32);
-                total_score += boosted_points;
-                
-                breakdown.category_scores.push(CategoryScore {
-                    category: format!("{} (boosted)", card_kind.name()),
-                    points: boosted_points,
-                });
-            }
+        // Boosted fruit teas
+        let (boost_points, mut boost_breakdown) = self.score_boosted_fruit_teas(player);
+        total_score += boost_points;
+        breakdown.category_scores.append(&mut boost_breakdown);
+
+        // Custom: Mochi Ice Cream
+        if let Some(mochi) = self.score_mochi_ice_cream(player) {
+            total_score += mochi.points;
+            breakdown.category_scores.push(mochi);
         }
         
         // TODO: Add set bonuses here (e.g., BrownSugarMilkTea's 3 unique teas)
         
         breakdown.total_score = total_score;
         Ok((total_score, breakdown))
+    }
+
+    // Score all public cards except those with custom scoring rules
+    // Excludes: MochiIceCream (custom)
+    fn score_base_categories(&self, player: &Player) -> (u32, Vec<CategoryScore>) {
+        let mut total = 0u32;
+        let mut categories: Vec<CategoryScore> = Vec::new();
+
+        for (card_kind, count) in &player.public_cards {
+            if *count == 0 {
+                continue;
+            }
+            // Skip custom-scored cards
+            if *card_kind == CardKind::MochiIceCream {
+                continue;
+            }
+
+            let points_per_card = card_kind.score();
+            let points = points_per_card * (*count as u32);
+            total += points;
+            categories.push(CategoryScore { category: card_kind.name().to_string(), points });
+        }
+
+        (total, categories)
+    }
+
+    // Score boosted fruit teas (3x points); these are tracked separately
+    fn score_boosted_fruit_teas(&self, player: &Player) -> (u32, Vec<CategoryScore>) {
+        let mut total = 0u32;
+        let mut categories: Vec<CategoryScore> = Vec::new();
+
+        for (card_kind, count) in &player.boosted_fruit_teas {
+            if *count == 0 {
+                continue;
+            }
+            let points_per_card = card_kind.score();
+            let boosted_points = (points_per_card * 3) * (*count as u32);
+            total += boosted_points;
+            categories.push(CategoryScore { category: format!("{} (boosted)", card_kind.name()), points: boosted_points });
+        }
+
+        (total, categories)
+    }
+
+    // Custom scoring for Mochi Ice Cream: 1/3/6/10/15 points for 1..=5+ copies (capped)
+    fn score_mochi_ice_cream(&self, player: &Player) -> Option<CategoryScore> {
+        let count = player.public_cards.get(&CardKind::MochiIceCream).copied().unwrap_or(0);
+        if count == 0 {
+            return None;
+        }
+
+        let capped = count.min(5);
+        let points = match capped {
+            1 => 1,
+            2 => 3,
+            3 => 6,
+            4 => 10,
+            _ => 15,
+        } as u32;
+
+        Some(CategoryScore { category: CardKind::MochiIceCream.name().to_string(), points })
     }
 
     // Public API methods

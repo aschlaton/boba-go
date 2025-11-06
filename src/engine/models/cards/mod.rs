@@ -1,5 +1,6 @@
 pub mod base;
 pub mod brown_sugar_milk_tea;
+pub mod drink_tray;
 pub mod lychee_tea;
 pub mod mango_tea;
 pub mod matcha_tea;
@@ -12,6 +13,7 @@ pub mod thai_tea;
 
 pub use base::{Card, OnDraftActionFn};
 pub use brown_sugar_milk_tea::BrownSugarMilkTea;
+pub use drink_tray::DrinkTray;
 pub use lychee_tea::LycheeTea;
 pub use mango_tea::MangoTea;
 pub use matcha_tea::MatchaTea;
@@ -94,4 +96,5 @@ define_card_kind! {
     MangoTea => MangoTea,
     LycheeTea => LycheeTea,
     PassionFruitTea => PassionFruitTea,
+    DrinkTray => DrinkTray,
 }
