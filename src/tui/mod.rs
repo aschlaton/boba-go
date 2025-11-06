@@ -1,10 +1,22 @@
 use std::io;
+use std::collections::HashMap;
+use crate::engine::{Game, GameConfig, GameError, ScoreBreakdown, PlayerTurnState, CardKind};
+
+mod views;
+use views::{render_hand, render_my_cards, render_player_cards};
 
 #[derive(Copy, Clone)]
 pub enum StartAction {
     NewLocalGame,
     HowToPlay,
     Quit,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+enum GameView {
+    Hand,
+    MyCards,
+    PlayerCards,
 }
 
 const LEFT_ASCII: &str = include_str!("assets/title.txt");
@@ -20,8 +32,8 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
-    Terminal,
+    widgets::{Block, Borders, List, ListItem, Paragraph, Table, Row, Cell},
+    Frame, Terminal,
 };
 
 pub fn run_start_page() -> StartAction {
@@ -239,6 +251,374 @@ pub fn run_start_page() -> StartAction {
     };
 
     // Restore terminal
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    result
+}
+
+
+pub fn render_score_breakdown(f: &mut Frame, game: &Game) {
+    let area = f.area();
+    
+    let players_public = game.get_players_public();
+    let mut score_data: Vec<(String, ScoreBreakdown)> = Vec::new();
+    
+    for player in &players_public {
+        match game.calculate_player_score(player.id) {
+            Ok((_total, breakdown)) => {
+                score_data.push((player.name.clone(), breakdown));
+            }
+            Err(_) => {
+                // Skip players with scoring errors
+            }
+        }
+    }
+    
+    // Sort by total score descending
+    score_data.sort_by(|a, b| b.1.total_score.partial_cmp(&a.1.total_score).unwrap_or(std::cmp::Ordering::Equal));
+    
+    let mut rows = Vec::new();
+    for (rank, (name, breakdown)) in score_data.iter().enumerate() {
+        let rank_cell = Cell::from(format!("#{}", rank + 1));
+        let name_cell = Cell::from(Span::styled(name.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        let total_cell = Cell::from(format!("{:.1}", breakdown.total_score));
+        
+        rows.push(Row::new(vec![rank_cell, name_cell, total_cell]));
+        
+        // Add breakdown rows
+        for category in &breakdown.category_scores {
+            let cat_cell = Cell::from(format!("  └─ {}", category.category));
+            let pts_cell = Cell::from(format!("{:.1}", category.points));
+            rows.push(Row::new(vec![Cell::from(""), cat_cell, pts_cell]));
+        }
+        
+        for bonus in &breakdown.set_bonuses {
+            let bonus_cell = Cell::from(format!("  └─ {} (Set Bonus)", bonus.description));
+            let pts_cell = Cell::from(format!("{:.1}", bonus.points));
+            rows.push(Row::new(vec![Cell::from(""), bonus_cell, pts_cell]));
+        }
+    }
+    
+    let widths = [Constraint::Length(4), Constraint::Percentage(60), Constraint::Percentage(40)];
+    let table = Table::new(rows, widths)
+        .block(Block::default().borders(Borders::ALL).title("Final Scores"));
+    f.render_widget(table, area);
+}
+
+pub fn run_local_game() -> Result<(), GameError> {
+    let _ = enable_raw_mode();
+    let mut stdout = io::stdout();
+    let _ = execute!(stdout, EnterAlternateScreen);
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend).expect("create terminal");
+
+    // Initialize game with 2 players
+    let config = GameConfig {
+        player_names: vec!["Player 1".to_string(), "Player 2".to_string()],
+        seed: None,
+        round_count: 3,
+        card_distribution: None, // Use default
+    };
+    
+    let mut game = match Game::new(config) {
+        Ok(g) => g,
+        Err(e) => {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+            return Err(e);
+        }
+    };
+
+    let mut current_player_id = 0;
+    let mut hand_selection_index = 0;
+    let mut player_selections: HashMap<usize, (HashMap<CardKind, usize>, HashMap<CardKind, usize>)> = HashMap::new();
+    let mut show_scores = false;
+    let mut current_view = GameView::Hand;
+    let mut viewing_player_id = 0;
+    let mut player_list_index = 0;
+
+    let result = loop {
+        let status = game.get_game_status();
+        
+        if status.is_game_over && show_scores {
+            // Show final scores
+            let _ = terminal.draw(|f| {
+                render_score_breakdown(f, &game);
+            });
+            
+            if let Ok(true) = event::poll(std::time::Duration::from_millis(200)) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if status.is_game_over {
+            show_scores = true;
+            continue;
+        }
+
+        // Check if current player has already selected
+        let player_state = game.get_player_turn_state(current_player_id).unwrap_or(PlayerTurnState::NotSelected);
+        
+        if player_state == PlayerTurnState::NotSelected {
+            // Current player needs to select
+            let hand_result = game.get_player_hand(current_player_id);
+            let hand = match hand_result {
+                Ok(h) => h,
+                Err(_) => {
+                    break Err(GameError::InvalidConfig);
+                }
+            };
+
+            // Check if player can use Drink Tray
+            let player_public = game.get_player_public(current_player_id).unwrap();
+            let has_drink_tray = player_public.public_cards.get(&CardKind::DrinkTray).copied().unwrap_or(0) > 0;
+            let max_selections = if has_drink_tray { 2 } else { 1 };
+            let selected_cards = player_selections.entry(current_player_id)
+                .or_insert_with(|| (HashMap::new(), HashMap::new()))
+                .0.clone();
+            let current_selections: usize = selected_cards.values().sum();
+
+            let _ = terminal.draw(|f| {
+                let area = f.area();
+                
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3), // Status bar
+                        Constraint::Min(10),   // Main content
+                        Constraint::Length(3), // Footer/controls
+                    ])
+                    .split(area);
+
+                // Status bar
+                let status = game.get_game_status();
+                let status_text = format!(
+                    "Round {}/{} | Turn {} | Passing: {:?}",
+                    status.round,
+                    status.round_count,
+                    status.turn,
+                    status.pass_direction
+                );
+                let status_para = Paragraph::new(status_text)
+                    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                    .block(Block::default().borders(Borders::ALL).title("Game Status"));
+                f.render_widget(status_para, chunks[0]);
+
+                // Main content - render based on current view
+                let player_selected = player_selections.get(&current_player_id)
+                    .map(|(sel, _)| sel);
+                
+                match current_view {
+                    GameView::Hand => {
+                        render_hand(f, &game, current_player_id, chunks[1], player_selected, hand_selection_index);
+                    }
+                    GameView::MyCards => {
+                        render_my_cards(f, &game, current_player_id, chunks[1]);
+                    }
+                    GameView::PlayerCards => {
+                        render_player_cards(f, &game, viewing_player_id, chunks[1], player_list_index);
+                    }
+                }
+
+                // Footer with selection info and view controls
+                let view_hint = match current_view {
+                    GameView::Hand => "H: Hand  M: My Cards  P: Player Cards",
+                    GameView::MyCards => "H: Hand  M: My Cards  P: Player Cards",
+                    GameView::PlayerCards => "H: Hand  M: My Cards  P: Player Cards  ↑/↓: Select Player",
+                };
+                let selection_text = if current_selections == 0 {
+                    format!("{} | Select a card ({} remaining)", view_hint, max_selections)
+                } else if current_selections < max_selections {
+                    format!("{} | Select {} more card(s) ({} total)", view_hint, max_selections - current_selections, max_selections)
+                } else {
+                    format!("{} | Press Enter to confirm selection", view_hint)
+                };
+                let footer = Paragraph::new(selection_text)
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL));
+                f.render_widget(footer, chunks[2]);
+            });
+
+            if let Ok(true) = event::poll(std::time::Duration::from_millis(200)) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                            KeyCode::Char('h') => {
+                                current_view = GameView::Hand;
+                            }
+                            KeyCode::Char('m') => {
+                                current_view = GameView::MyCards;
+                            }
+                            KeyCode::Char('p') => {
+                                current_view = GameView::PlayerCards;
+                                viewing_player_id = player_list_index;
+                            }
+                            KeyCode::Up => {
+                                if current_view == GameView::PlayerCards {
+                                    if player_list_index == 0 {
+                                        player_list_index = game.num_players() - 1;
+                                    } else {
+                                        player_list_index -= 1;
+                                    }
+                                    viewing_player_id = player_list_index;
+                                } else {
+                                    // Navigate hand
+                                    let hand_vec: Vec<(CardKind, usize)> = hand.iter()
+                                        .filter(|(_, count)| **count > 0)
+                                        .map(|(k, v)| (*k, *v))
+                                        .collect();
+                                    if !hand_vec.is_empty() {
+                                        if hand_selection_index == 0 {
+                                            hand_selection_index = hand_vec.len() - 1;
+                                        } else {
+                                            hand_selection_index -= 1;
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Down => {
+                                if current_view == GameView::PlayerCards {
+                                    player_list_index = (player_list_index + 1) % game.num_players();
+                                    viewing_player_id = player_list_index;
+                                } else {
+                                    // Navigate hand
+                                    let hand_vec: Vec<(CardKind, usize)> = hand.iter()
+                                        .filter(|(_, count)| **count > 0)
+                                        .map(|(k, v)| (*k, *v))
+                                        .collect();
+                                    if !hand_vec.is_empty() {
+                                        hand_selection_index = (hand_selection_index + 1) % hand_vec.len();
+                                    }
+                                }
+                            }
+                            KeyCode::Char(' ') => {
+                                // Select card
+                                let hand_vec: Vec<(CardKind, usize)> = hand.iter()
+                                    .filter(|(_, count)| **count > 0)
+                                    .map(|(k, v)| (*k, *v))
+                                    .collect();
+                                
+                                if !hand_vec.is_empty() && hand_selection_index < hand_vec.len() {
+                                    let (card_kind, available_count) = hand_vec[hand_selection_index];
+                                    let player_selected = player_selections.entry(current_player_id)
+                                        .or_insert_with(|| (HashMap::new(), HashMap::new()));
+                                    let already_selected = player_selected.0.get(&card_kind).copied().unwrap_or(0);
+                                    
+                                    if already_selected < available_count && current_selections < max_selections {
+                                        *player_selected.0.entry(card_kind).or_insert(0) += 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                // Confirm selection
+                                let player_selected = player_selections.entry(current_player_id)
+                                    .or_insert_with(|| (HashMap::new(), HashMap::new()));
+                                let total_selected: usize = player_selected.0.values().sum();
+                                
+                                if total_selected >= max_selections {
+                                    // Build remaining hand (hand minus selected cards)
+                                    let mut remaining_hand = hand.clone();
+                                    for (kind, count) in &player_selected.0 {
+                                        if let Some(remaining_count) = remaining_hand.get_mut(kind) {
+                                            *remaining_count -= count;
+                                            if *remaining_count == 0 {
+                                                remaining_hand.remove(kind);
+                                            }
+                                        }
+                                    }
+                                    
+                                    // If Drink Tray was used, add it back to remaining hand
+                                    if has_drink_tray && total_selected == 2 {
+                                        *remaining_hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
+                                    }
+                                    
+                                    // Validate submission
+                                    if let Err(_) = game.validate_hand_submission(current_player_id, &remaining_hand) {
+                                        // Reset selection on validation error
+                                        player_selected.0.clear();
+                                    } else {
+                                        // Store remaining hand
+                                        player_selected.1 = remaining_hand;
+                                        
+                                        // Mark player as selected
+                                        if let Err(_) = game.mark_player_selected(current_player_id) {
+                                            break Err(GameError::InvalidConfig);
+                                        }
+                                        
+                                        // Move to next player
+                                        current_player_id = (current_player_id + 1) % game.num_players();
+                                        hand_selection_index = 0;
+                                    }
+                                }
+                            }
+                            KeyCode::Backspace | KeyCode::Char('r') => {
+                                // Reset selection for current player
+                                if let Some(player_selected) = player_selections.get_mut(&current_player_id) {
+                                    player_selected.0.clear();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        } else {
+            // All players have selected, process turn
+            if game.all_players_selected() {
+                // Build submissions for all players
+                let mut submissions = Vec::new();
+                for player_id in 0..game.num_players() {
+                    if let Some((selected, remaining)) = player_selections.get(&player_id) {
+                        submissions.push(Some((selected.clone(), remaining.clone())));
+                    } else {
+                        // Player didn't have a selection stored, skip them
+                        submissions.push(None);
+                    }
+                }
+                
+                // Process the turn
+                if let Err(e) = game.process_turn(submissions) {
+                    break Err(e);
+                }
+                
+                // Clear selections
+                player_selections.clear();
+                current_player_id = 0;
+                hand_selection_index = 0;
+                
+                // Check if round is over (all hands empty)
+                let all_hands_empty = (0..game.num_players()).all(|pid| {
+                    game.get_player_hand(pid).map(|h| h.values().sum::<usize>() == 0).unwrap_or(true)
+                });
+                
+                if all_hands_empty {
+                    // Round is over, start new round or end game
+                    let status = game.get_game_status();
+                    if status.round < status.round_count {
+                        if let Err(e) = game.start_new_round() {
+                            break Err(e);
+                        }
+                    }
+                } else {
+                    // Move to next turn
+                    game.next_turn();
+                }
+            } else {
+                // Wait for other players (in local game, rotate through players)
+                current_player_id = (current_player_id + 1) % game.num_players();
+            }
+        }
+    };
+
     let _ = disable_raw_mode();
     let _ = execute!(io::stdout(), LeaveAlternateScreen);
     result

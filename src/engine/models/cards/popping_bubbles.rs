@@ -7,5 +7,6 @@ impl Card for PoppingBubbles {
     const DESCRIPTION: &'static str = "placeholder";
     const FLAVOR_TEXT: &'static str = "placeholder";
     const SCORE: u32 = 0;
+    const PLAYABLE: bool = false;
 }
 

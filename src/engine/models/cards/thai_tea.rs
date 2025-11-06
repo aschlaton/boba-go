@@ -7,4 +7,5 @@ impl Card for ThaiTea {
     const DESCRIPTION: &'static str = "+2 points. Each set of 3 unique non-fruit teas gives a +5 bonus!";
     const FLAVOR_TEXT: &'static str = "placeholder";
     const SCORE: u32 = 2;
+    const PLAYABLE: bool = false;
 }

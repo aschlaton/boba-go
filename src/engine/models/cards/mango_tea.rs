@@ -7,6 +7,7 @@ impl Card for MangoTea {
     const DESCRIPTION: &'static str = "placeholder";
     const FLAVOR_TEXT: &'static str = "placeholder";
     const SCORE: u32 = 2;
+    const PLAYABLE: bool = false;
     
     fn is_fruit_tea() -> bool {
         true
