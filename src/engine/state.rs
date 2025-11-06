@@ -34,6 +34,7 @@ pub struct Game {
     pub round: usize,
     pub turn: usize,
     pub player_turn_states: Vec<PlayerTurnState>,
+    pub round_count: usize,
 }
 
 impl Game {
@@ -77,6 +78,7 @@ impl Game {
             round: 1,
             turn: 1,
             player_turn_states,
+            round_count: config.round_count,
         };
         
         game.deck = game.build_deck();
@@ -189,12 +191,29 @@ impl Game {
         }
 
         self.pass_hands();
-        self.next_turn();
+        
+        let all_hands_empty = self.players.iter().all(|p| p.hand.is_empty());
+        if all_hands_empty {
+            if self.round < self.round_count {
+                self.start_new_round()?;
+            }
+        } else {
+            self.next_turn();
+        }
+        
         Ok(())
+    }
+
+    pub fn is_game_over(&self) -> bool {
+        self.round >= self.round_count && self.players.iter().all(|p| p.hand.is_empty())
     }
 
     // distribute new cards to players
     pub fn start_new_round(&mut self) -> Result<(), GameError> {
+        if self.round >= self.round_count {
+            return Err(GameError::InvalidConfig);
+        }
+        
         let num_players = self.players.len();
         let cards_per_player: usize = constants::cards_per_player(num_players)
             .ok_or(GameError::InvalidConfig)?;
