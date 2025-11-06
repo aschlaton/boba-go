@@ -10,14 +10,12 @@ pub enum CardKind {
     AloeJelly
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
     pub id: u32,
     pub kind: CardKind,
 }
 
-
-// TODO: flesh out ui
 impl fmt::Display for Card {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use CardKind::*;
@@ -32,3 +30,4 @@ impl fmt::Display for Card {
         write!(f, "{name}")
     }
 }
+
