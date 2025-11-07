@@ -313,12 +313,8 @@ pub fn run_local_game() -> Result<(), GameError> {
     let mut terminal = Terminal::new(backend).expect("create terminal");
 
     // Initialize game with 2 players
-    let config = GameConfig {
-        player_names: vec!["Player 1".to_string(), "Player 2".to_string()],
-        seed: None,
-        round_count: 3,
-        card_distribution: None, // Use default
-    };
+    let mut config = GameConfig::default();
+    config.player_names = vec!["Player 1".to_string(), "Player 2".to_string()];
     
     let mut game = match Game::new(config) {
         Ok(g) => g,
@@ -331,7 +327,9 @@ pub fn run_local_game() -> Result<(), GameError> {
 
     let mut current_player_id = 0;
     let mut hand_selection_index = 0;
+    let mut my_cards_selection_index = 0;
     let mut player_selections: HashMap<usize, (HashMap<CardKind, usize>, HashMap<CardKind, usize>)> = HashMap::new();
+    let mut drink_tray_activated: HashMap<usize, bool> = HashMap::new();
     let mut show_scores = false;
     let mut current_view = GameView::Hand;
     let mut viewing_player_id = 0;
@@ -377,10 +375,9 @@ pub fn run_local_game() -> Result<(), GameError> {
                 }
             };
 
-            // Check if player can use Drink Tray
-            let player_public = game.get_player_public(current_player_id).unwrap();
-            let has_drink_tray = player_public.public_cards.get(&CardKind::DrinkTray).copied().unwrap_or(0) > 0;
-            let max_selections = if has_drink_tray { 2 } else { 1 };
+            // Check if player has activated Drink Tray this turn
+            let has_drink_tray_activated = drink_tray_activated.get(&current_player_id).copied().unwrap_or(false);
+            let max_selections = if has_drink_tray_activated { 2 } else { 1 };
             let selected_cards = player_selections.entry(current_player_id)
                 .or_insert_with(|| (HashMap::new(), HashMap::new()))
                 .0.clone();
@@ -421,7 +418,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                         render_hand(f, &game, current_player_id, chunks[1], player_selected, hand_selection_index);
                     }
                     GameView::MyCards => {
-                        render_my_cards(f, &game, current_player_id, chunks[1]);
+                        render_my_cards(f, &game, current_player_id, chunks[1], my_cards_selection_index);
                     }
                     GameView::PlayerCards => {
                         render_player_cards(f, &game, viewing_player_id, chunks[1], player_list_index);
@@ -457,6 +454,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                             }
                             KeyCode::Char('m') => {
                                 current_view = GameView::MyCards;
+                                my_cards_selection_index = 0;
                             }
                             KeyCode::Char('p') => {
                                 current_view = GameView::PlayerCards;
@@ -470,6 +468,27 @@ pub fn run_local_game() -> Result<(), GameError> {
                                         player_list_index -= 1;
                                     }
                                     viewing_player_id = player_list_index;
+                                } else if current_view == GameView::MyCards {
+                                    // Navigate my cards
+                                    let player_public = game.get_player_public(current_player_id).unwrap();
+                                    let mut card_count = 0;
+                                    for (_, count) in &player_public.public_cards {
+                                        if *count > 0 {
+                                            card_count += 1;
+                                        }
+                                    }
+                                    for (_, count) in &player_public.boosted_fruit_teas {
+                                        if *count > 0 {
+                                            card_count += 1;
+                                        }
+                                    }
+                                    if card_count > 0 {
+                                        if my_cards_selection_index == 0 {
+                                            my_cards_selection_index = card_count - 1;
+                                        } else {
+                                            my_cards_selection_index -= 1;
+                                        }
+                                    }
                                 } else {
                                     // Navigate hand
                                     let hand_vec: Vec<(CardKind, usize)> = hand.iter()
@@ -489,6 +508,23 @@ pub fn run_local_game() -> Result<(), GameError> {
                                 if current_view == GameView::PlayerCards {
                                     player_list_index = (player_list_index + 1) % game.num_players();
                                     viewing_player_id = player_list_index;
+                                } else if current_view == GameView::MyCards {
+                                    // Navigate my cards
+                                    let player_public = game.get_player_public(current_player_id).unwrap();
+                                    let mut card_count = 0;
+                                    for (_, count) in &player_public.public_cards {
+                                        if *count > 0 {
+                                            card_count += 1;
+                                        }
+                                    }
+                                    for (_, count) in &player_public.boosted_fruit_teas {
+                                        if *count > 0 {
+                                            card_count += 1;
+                                        }
+                                    }
+                                    if card_count > 0 {
+                                        my_cards_selection_index = (my_cards_selection_index + 1) % card_count;
+                                    }
                                 } else {
                                     // Navigate hand
                                     let hand_vec: Vec<(CardKind, usize)> = hand.iter()
@@ -501,62 +537,112 @@ pub fn run_local_game() -> Result<(), GameError> {
                                 }
                             }
                             KeyCode::Char(' ') => {
-                                // Select card
-                                let hand_vec: Vec<(CardKind, usize)> = hand.iter()
-                                    .filter(|(_, count)| **count > 0)
-                                    .map(|(k, v)| (*k, *v))
-                                    .collect();
-                                
-                                if !hand_vec.is_empty() && hand_selection_index < hand_vec.len() {
-                                    let (card_kind, available_count) = hand_vec[hand_selection_index];
-                                    let player_selected = player_selections.entry(current_player_id)
-                                        .or_insert_with(|| (HashMap::new(), HashMap::new()));
-                                    let already_selected = player_selected.0.get(&card_kind).copied().unwrap_or(0);
+                                // Select card - only works in Hand view
+                                if current_view == GameView::Hand {
+                                    let hand_vec: Vec<(CardKind, usize)> = hand.iter()
+                                        .filter(|(_, count)| **count > 0)
+                                        .map(|(k, v)| (*k, *v))
+                                        .collect();
                                     
-                                    if already_selected < available_count && current_selections < max_selections {
-                                        *player_selected.0.entry(card_kind).or_insert(0) += 1;
+                                    if !hand_vec.is_empty() && hand_selection_index < hand_vec.len() {
+                                        let (card_kind, available_count) = hand_vec[hand_selection_index];
+                                        
+                                        // Normal card selection (Drink Tray is activated from My Cards view)
+                                        let player_selected = player_selections.entry(current_player_id)
+                                            .or_insert_with(|| (HashMap::new(), HashMap::new()));
+                                        let already_selected = player_selected.0.get(&card_kind).copied().unwrap_or(0);
+                                        
+                                        // Recalculate current selections from the actual selection state
+                                        let current_selections_count: usize = player_selected.0.values().sum();
+                                        
+                                        if already_selected < available_count && current_selections_count < max_selections {
+                                            *player_selected.0.entry(card_kind).or_insert(0) += 1;
+                                        }
                                     }
                                 }
                             }
                             KeyCode::Enter => {
-                                // Confirm selection
-                                let player_selected = player_selections.entry(current_player_id)
-                                    .or_insert_with(|| (HashMap::new(), HashMap::new()));
-                                let total_selected: usize = player_selected.0.values().sum();
-                                
-                                if total_selected >= max_selections {
-                                    // Build remaining hand (hand minus selected cards)
-                                    let mut remaining_hand = hand.clone();
-                                    for (kind, count) in &player_selected.0 {
-                                        if let Some(remaining_count) = remaining_hand.get_mut(kind) {
-                                            *remaining_count -= count;
-                                            if *remaining_count == 0 {
-                                                remaining_hand.remove(kind);
+                                // Use Drink Tray from My Cards view (move from public_cards to hand)
+                                if current_view == GameView::MyCards {
+                                    let player_public = game.get_player_public(current_player_id).unwrap();
+                                    let mut card_list: Vec<(CardKind, usize, bool)> = Vec::new();
+                                    for (card_kind, count) in &player_public.public_cards {
+                                        if *count > 0 {
+                                            card_list.push((*card_kind, *count, false));
+                                        }
+                                    }
+                                    for (card_kind, count) in &player_public.boosted_fruit_teas {
+                                        if *count > 0 {
+                                            card_list.push((*card_kind, *count, true));
+                                        }
+                                    }
+                                    
+                                    if !card_list.is_empty() && my_cards_selection_index < card_list.len() {
+                                        let (card_kind, _, is_boosted) = card_list[my_cards_selection_index];
+                                        // Only allow using Drink Tray (not boosted fruit teas)
+                                        if card_kind == CardKind::DrinkTray && !is_boosted {
+                                            // Move Drink Tray from public_cards to hand and activate it
+                                            let player = &mut game.players[current_player_id];
+                                            if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
+                                                *drink_tray_count -= 1;
+                                                if *drink_tray_count == 0 {
+                                                    player.public_cards.remove(&CardKind::DrinkTray);
+                                                }
+                                                // Add to hand
+                                                *player.hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
+                                                // Activate Drink Tray for this turn
+                                                drink_tray_activated.insert(current_player_id, true);
                                             }
                                         }
                                     }
+                                } else if current_view == GameView::Hand {
+                                    // Confirm selection - only works in Hand view
+                                    let player_selected = player_selections.entry(current_player_id)
+                                        .or_insert_with(|| (HashMap::new(), HashMap::new()));
+                                    let total_selected: usize = player_selected.0.values().sum();
                                     
-                                    // If Drink Tray was used, add it back to remaining hand
-                                    if has_drink_tray && total_selected == 2 {
-                                        *remaining_hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
-                                    }
-                                    
-                                    // Validate submission
-                                    if let Err(_) = game.validate_hand_submission(current_player_id, &remaining_hand) {
-                                        // Reset selection on validation error
-                                        player_selected.0.clear();
-                                    } else {
-                                        // Store remaining hand
-                                        player_selected.1 = remaining_hand;
+                                    if total_selected >= max_selections {
+                                        // Get fresh hand (in case Drink Tray was activated this turn)
+                                        let current_hand_result = game.get_player_hand(current_player_id);
+                                        let current_hand = match current_hand_result {
+                                            Ok(h) => h,
+                                            Err(_) => {
+                                                player_selected.0.clear();
+                                                continue;
+                                            }
+                                        };
                                         
-                                        // Mark player as selected
-                                        if let Err(_) = game.mark_player_selected(current_player_id) {
-                                            break Err(GameError::InvalidConfig);
+                                        // Build remaining hand (current_hand minus selected cards)
+                                        let mut remaining_hand = current_hand.clone();
+                                        for (kind, count) in &player_selected.0 {
+                                            if let Some(remaining_count) = remaining_hand.get_mut(kind) {
+                                                *remaining_count -= count;
+                                                if *remaining_count == 0 {
+                                                    remaining_hand.remove(kind);
+                                                }
+                                            }
                                         }
                                         
-                                        // Move to next player
-                                        current_player_id = (current_player_id + 1) % game.num_players();
-                                        hand_selection_index = 0;
+                                        // Validate submission
+                                        if let Err(_) = game.validate_hand_submission(current_player_id, &player_selected.0, &remaining_hand) {
+                                            // Reset selection on validation error
+                                            player_selected.0.clear();
+                                        } else {
+                                            // Store remaining hand
+                                            player_selected.1 = remaining_hand;
+                                            
+                                            // Mark player as selected
+                                            if let Err(_) = game.mark_player_selected(current_player_id) {
+                                                break Err(GameError::InvalidConfig);
+                                            }
+                                            
+                                            // Reset Drink Tray activation for this player
+                                            drink_tray_activated.remove(&current_player_id);
+                                            
+                                            // Move to next player
+                                            current_player_id = (current_player_id + 1) % game.num_players();
+                                            hand_selection_index = 0;
+                                        }
                                     }
                                 }
                             }
@@ -585,7 +671,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                     }
                 }
                 
-                // Process the turn
+                // Process the turn (this handles passing hands, on_draft actions, and calling next_turn/start_new_round)
                 if let Err(e) = game.process_turn(submissions) {
                     break Err(e);
                 }
@@ -594,24 +680,6 @@ pub fn run_local_game() -> Result<(), GameError> {
                 player_selections.clear();
                 current_player_id = 0;
                 hand_selection_index = 0;
-                
-                // Check if round is over (all hands empty)
-                let all_hands_empty = (0..game.num_players()).all(|pid| {
-                    game.get_player_hand(pid).map(|h| h.values().sum::<usize>() == 0).unwrap_or(true)
-                });
-                
-                if all_hands_empty {
-                    // Round is over, start new round or end game
-                    let status = game.get_game_status();
-                    if status.round < status.round_count {
-                        if let Err(e) = game.start_new_round() {
-                            break Err(e);
-                        }
-                    }
-                } else {
-                    // Move to next turn
-                    game.next_turn();
-                }
             } else {
                 // Wait for other players (in local game, rotate through players)
                 current_player_id = (current_player_id + 1) % game.num_players();

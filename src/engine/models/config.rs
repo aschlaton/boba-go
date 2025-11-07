@@ -23,6 +23,7 @@ impl Default for GameConfig {
         default_distribution.insert(MangoTea, 10);
         default_distribution.insert(LycheeTea, 10);
         default_distribution.insert(PassionFruitTea, 10);
+        default_distribution.insert(DrinkTray, 10);
         
         Self {
             player_names: Vec::new(),

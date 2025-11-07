@@ -182,19 +182,29 @@ impl Game {
         }
     }
     
-    // 
-    pub fn validate_hand_submission(&self, player_id: usize, final_hand: &HashMap<CardKind, usize>) -> Result<(), GameError> {
+    // Validate hand submission - client sends selected cards and remaining hand
+    // The client handles all Drink Tray logic (activation, allowing 2 selections)
+    // Backend just validates that hand math is correct: current_hand = selected + remaining
+    pub fn validate_hand_submission(&self, player_id: usize, selected_cards: &HashMap<CardKind, usize>, remaining_hand: &HashMap<CardKind, usize>) -> Result<(), GameError> {
         if player_id >= self.players.len() {
             return Err(GameError::InvalidConfig);
         }
-        
-        let current_hand_size: usize = self.players[player_id].hand.values().sum();
-        let final_hand_size: usize = final_hand.values().sum();
-        
-        if final_hand_size != current_hand_size - 1 {
+
+        let current_hand = &self.players[player_id].hand;
+
+        // Validate that selected + remaining = current
+        let mut reconstructed = HashMap::new();
+        for (kind, count) in selected_cards {
+            *reconstructed.entry(*kind).or_insert(0) += count;
+        }
+        for (kind, count) in remaining_hand {
+            *reconstructed.entry(*kind).or_insert(0) += count;
+        }
+
+        if &reconstructed != current_hand {
             return Err(GameError::InvalidConfig);
         }
-        
+
         Ok(())
     }
     
@@ -236,21 +246,6 @@ impl Game {
         for (player_id, submission_opt) in submissions.iter().enumerate() {
             if let Some((selected_cards, remaining_hand)) = submission_opt {
                 let player = &mut self.players[player_id];
-
-                // Check if player used Drink Tray (selected 2 cards)
-                let selected_count: usize = selected_cards.values().sum();
-                let used_drink_tray = selected_count == 2 && player.public_cards.get(&CardKind::DrinkTray).copied().unwrap_or(0) > 0;
-                
-                // If Drink Tray was used, remove it from public_cards
-                // (remaining_hand already includes Drink Tray from client)
-                if used_drink_tray {
-                    if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
-                        *drink_tray_count -= 1;
-                        if *drink_tray_count == 0 {
-                            player.public_cards.remove(&CardKind::DrinkTray);
-                        }
-                    }
-                }
 
                 // Add selected cards to public_cards and handle Popping Bubbles pairing
                 for (kind, count) in selected_cards {
@@ -598,6 +593,7 @@ impl Game {
             dist.insert(MangoTea, 10);
             dist.insert(LycheeTea, 10);
             dist.insert(PassionFruitTea, 10);
+            dist.insert(DrinkTray, 10);
             dist
         });
         

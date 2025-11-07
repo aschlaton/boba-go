@@ -1,9 +1,10 @@
-use crate::engine::Game;
+use crate::engine::{Game, CardKind};
+use super::card_details::render_card_details;
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Span,
-    widgets::{Block, Borders, Paragraph},
+    text::Line,
+    widgets::{Block, Borders, List, ListItem},
     Frame,
 };
 
@@ -12,43 +13,79 @@ pub fn render_my_cards(
     game: &Game,
     current_player_id: usize,
     area: Rect,
+    highlight_index: usize,
 ) {
+    // Split area: 60% card list, 40% card details
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(60),
+            Constraint::Percentage(40),
+        ])
+        .split(area);
+
     let player_public = match game.get_player_public(current_player_id) {
         Ok(p) => p,
         Err(_) => {
-            let error_para = Paragraph::new("Error loading cards")
+            let error_para = ratatui::widgets::Paragraph::new("Error loading cards")
                 .block(Block::default().borders(Borders::ALL).title("My Cards"));
-            f.render_widget(error_para, area);
+            f.render_widget(error_para, chunks[0]);
             return;
         }
     };
     
-    // Format public cards
-    let mut card_texts = Vec::new();
+    // Build list of cards (public cards + boosted fruit teas)
+    let mut card_list: Vec<(CardKind, usize, bool)> = Vec::new();
+    
+    // Add public cards
     for (card_kind, count) in &player_public.public_cards {
         if *count > 0 {
-            card_texts.push(format!("{}x {}", count, card_kind.name()));
+            card_list.push((*card_kind, *count, false));
         }
     }
     
-    // Format boosted fruit teas
+    // Add boosted fruit teas
     for (card_kind, count) in &player_public.boosted_fruit_teas {
         if *count > 0 {
-            card_texts.push(format!("{}x {} (3x)", count, card_kind.name()));
+            card_list.push((*card_kind, *count, true));
         }
     }
     
-    let cards_str = if card_texts.is_empty() {
-        "No cards collected yet".to_string()
-    } else {
-        card_texts.join("\n")
-    };
+    // Create list items
+    let mut items = Vec::new();
+    for (idx, (card_kind, count, is_boosted)) in card_list.iter().enumerate() {
+        let card_name = card_kind.name();
+        let text = if *is_boosted {
+            format!("{}x {} (3x)", count, card_name)
+        } else {
+            format!("{}x {}", count, card_name)
+        };
+        
+        let style: Style = if idx == highlight_index {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        
+        items.push(ListItem::new(Line::from(vec![ratatui::text::Span::styled(text, style)])));
+    }
     
-    let para = Paragraph::new(cards_str)
-        .block(Block::default().borders(Borders::ALL).title(Span::styled(
-            format!("{}'s Cards", player_public.name),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        )));
-    f.render_widget(para, area);
+    if items.is_empty() {
+        items.push(ListItem::new("No cards collected yet"));
+    }
+    
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(format!("{}'s Cards", player_public.name)))
+        .highlight_style(Style::default().bg(Color::Rgb(180, 180, 180)))
+        .highlight_symbol("▶ ");
+    f.render_widget(list, chunks[0]);
+
+    // Card details box (right side)
+    let highlighted_card = if !card_list.is_empty() && highlight_index < card_list.len() {
+        Some(card_list[highlight_index].0)
+    } else {
+        None
+    };
+    render_card_details(f, chunks[1], highlighted_card);
 }
 
