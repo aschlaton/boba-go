@@ -1,10 +1,20 @@
-use boba_go::tui::{run_start_page, run_local_game, StartAction};
+use boba_go::tui::{run_start_page, run_local_game, run_host_game, run_join_game, StartAction};
 
 fn main() {
     match run_start_page() {
         StartAction::NewLocalGame => {
             if let Err(e) = run_local_game() {
                 eprintln!("Game error: {}", e);
+            }
+        }
+        StartAction::HostNetworkGame => {
+            if let Err(e) = run_host_game() {
+                eprintln!("Network error: {}", e);
+            }
+        }
+        StartAction::JoinNetworkGame => {
+            if let Err(e) = run_join_game() {
+                eprintln!("Network error: {}", e);
             }
         }
         StartAction::HowToPlay => {

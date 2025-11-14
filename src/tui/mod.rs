@@ -3,11 +3,16 @@ use std::collections::HashMap;
 use crate::engine::{Game, GameConfig, GameError, ScoreBreakdown, PlayerTurnState, CardKind};
 
 mod views;
+mod network_game;
+
 use views::{render_hand, render_my_cards, render_player_cards};
+pub use network_game::{run_host_game, run_join_game};
 
 #[derive(Copy, Clone)]
 pub enum StartAction {
     NewLocalGame,
+    HostNetworkGame,
+    JoinNetworkGame,
     HowToPlay,
     Quit,
 }
@@ -47,6 +52,8 @@ pub fn run_start_page() -> StartAction {
     let mut selected: usize = 0;
     let options = [
         ("Start new local game", StartAction::NewLocalGame),
+        ("Host network game", StartAction::HostNetworkGame),
+        ("Join network game", StartAction::JoinNetworkGame),
         ("How to play", StartAction::HowToPlay),
         ("Quit", StartAction::Quit),
     ];
@@ -334,6 +341,7 @@ pub fn run_local_game() -> Result<(), GameError> {
     let mut current_view = GameView::Hand;
     let mut viewing_player_id = 0;
     let mut player_list_index = 0;
+    let mut view_history: Vec<GameView> = Vec::new();
 
     let result = loop {
         let status = game.get_game_status();
@@ -462,15 +470,53 @@ pub fn run_local_game() -> Result<(), GameError> {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
                             KeyCode::Char('h') => {
-                                current_view = GameView::Hand;
+                                if current_view != GameView::Hand {
+                                    view_history.push(current_view);
+                                    current_view = GameView::Hand;
+                                }
                             }
                             KeyCode::Char('m') => {
-                                current_view = GameView::MyCards;
-                                my_cards_selection_index = 0;
+                                if current_view != GameView::MyCards {
+                                    view_history.push(current_view);
+                                    current_view = GameView::MyCards;
+                                    my_cards_selection_index = 0;
+                                }
                             }
                             KeyCode::Char('p') => {
-                                current_view = GameView::PlayerCards;
-                                viewing_player_id = player_list_index;
+                                if current_view != GameView::PlayerCards {
+                                    view_history.push(current_view);
+                                    current_view = GameView::PlayerCards;
+                                    viewing_player_id = player_list_index;
+                                }
+                            }
+                            KeyCode::Left => {
+                                // Go back in navigation history
+                                if let Some(previous_view) = view_history.pop() {
+                                    current_view = previous_view;
+                                }
+                            }
+                            KeyCode::Right => {
+                                // Cycle forward through views
+                                current_view = match current_view {
+                                    GameView::Hand => {
+                                        view_history.push(GameView::Hand);
+                                        GameView::MyCards
+                                    }
+                                    GameView::MyCards => {
+                                        view_history.push(GameView::MyCards);
+                                        GameView::PlayerCards
+                                    }
+                                    GameView::PlayerCards => {
+                                        view_history.push(GameView::PlayerCards);
+                                        GameView::Hand
+                                    }
+                                };
+                                // Reset selection indices when changing views
+                                match current_view {
+                                    GameView::MyCards => my_cards_selection_index = 0,
+                                    GameView::PlayerCards => player_list_index = 0,
+                                    _ => {}
+                                }
                             }
                             KeyCode::Up => {
                                 if current_view == GameView::PlayerCards {
@@ -623,6 +669,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                                 // Activate Drink Tray for this turn
                                                 drink_tray_activated.insert(current_player_id, true);
                                                 // Navigate to Hand view
+                                                view_history.push(GameView::MyCards);
                                                 current_view = GameView::Hand;
                                                 hand_selection_index = 0;
                                             }
@@ -702,6 +749,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                             // Deactivate Drink Tray
                                             drink_tray_activated.remove(&current_player_id);
                                             // Navigate to My Cards view
+                                            view_history.push(GameView::Hand);
                                             current_view = GameView::MyCards;
                                             my_cards_selection_index = 0;
                                         }
