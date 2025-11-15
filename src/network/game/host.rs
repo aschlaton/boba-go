@@ -118,9 +118,7 @@ impl Host<GameHostState> {
         Ok(all_submitted)
     }
 
-    // process turn when all players have submitted
-    pub fn process_turn(&mut self) -> Result<(), String> {
-        // build submissions vec from stored submissions
+    pub fn process_turn(&mut self) -> Result<Option<GameHostEvent>, String> {
         let mut submissions = Vec::new();
         for player_id in 0..self.state.game.num_players() {
             if let Some((selected, remaining)) = self.state.turn_submissions.get(&player_id) {
@@ -130,21 +128,21 @@ impl Host<GameHostState> {
             }
         }
 
-        // process turn in game engine
         self.state.game.process_turn(submissions)
             .map_err(|e| format!("Process turn failed: {:?}", e))?;
 
-        // clear submissions for next turn
         self.state.turn_submissions.clear();
 
-        // broadcast updated game state
-        self.broadcast_game_update();
-
-        log::host("Turn processed successfully".to_string());
-        Ok(())
+        if self.state.game.is_game_over() {
+            log::host("Game complete! Broadcasting final scores".to_string());
+            let event = self.broadcast_game_ended(GameEndReason::Completed);
+            Ok(Some(event))
+        } else {
+            self.broadcast_game_update();
+            Ok(None)
+        }
     }
 
-    // broadcast game update to all players
     pub fn broadcast_game_update(&mut self) {
         let players_public = self.state.game.get_players_public();
         let game_status = self.state.game.get_game_status();
@@ -176,8 +174,7 @@ impl Host<GameHostState> {
         }
     }
 
-    // broadcast game ended
-    fn broadcast_game_ended(&mut self, reason: GameEndReason) {
+    fn broadcast_game_ended(&mut self, reason: GameEndReason) -> GameHostEvent {
         let mut final_scores = Vec::new();
 
         for player_id in 0..self.state.game.num_players() {
@@ -187,8 +184,8 @@ impl Host<GameHostState> {
         }
 
         let message = GameHostMessage::GameEnded {
-            final_scores,
-            reason,
+            final_scores: final_scores.clone(),
+            reason: reason.clone(),
         };
 
         if let Ok(json) = serde_json::to_string(&message) {
@@ -198,9 +195,10 @@ impl Host<GameHostState> {
                 .publish(self.topic.clone(), json.as_bytes())
                 .ok();
         }
+
+        GameHostEvent::GameEnded { final_scores, reason }
     }
 
-    // handle request-response network events
     fn handle_request_response(
         &mut self,
         rr_event: libp2p::request_response::Event<ClientRequest, HostResponse>,
@@ -231,17 +229,15 @@ impl Host<GameHostState> {
         None
     }
 
-    // handle connection closed event
     fn handle_connection_closed(&mut self, peer_id: PeerId) -> Option<GameHostEvent> {
         super::super::events::log_host_connection_closed(peer_id);
         if let Some(player_id) = self.state.remove_player(&peer_id) {
-            self.broadcast_game_ended(GameEndReason::PlayerDisconnected { player_id });
-            return Some(GameHostEvent::PlayerDisconnected { peer_id, player_id });
+            let event = self.broadcast_game_ended(GameEndReason::PlayerDisconnected { player_id });
+            return Some(event);
         }
         None
     }
 
-    // run event loop
     pub async fn next_event(&mut self) -> Option<GameHostEvent> {
         loop {
             match self.swarm.select_next_some().await {
@@ -269,6 +265,7 @@ pub enum GameHostEvent {
     PlayerSubmitted { player_id: usize },
     AllPlayersSubmitted,
     PlayerDisconnected { peer_id: PeerId, player_id: usize },
+    GameEnded { final_scores: Vec<(usize, f32)>, reason: GameEndReason },
 }
 
 impl crate::tui::GameInterface for Host<GameHostState> {

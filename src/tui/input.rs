@@ -262,6 +262,7 @@ fn handle_enter_key<G: GameInterface>(
                             *remaining_count = remaining_count.saturating_sub(*count);
                         }
                     }
+                    remaining.retain(|_, count| *count > 0);
 
                     if game.submit_turn(selected.clone(), remaining).is_ok() {
                         return InputAction::SubmitTurn;

@@ -291,7 +291,11 @@ impl Game {
             }
         }
 
-        self.pass_hands();
+        let all_hands_empty = self.players.iter().all(|p| p.hand.is_empty());
+
+        if !all_hands_empty {
+            self.pass_hands();
+        }
 
         // process on_draft actions 
         let direction = self.get_current_pass_direction();
@@ -315,19 +319,15 @@ impl Game {
             }
         }
         
-        // Sync hands back to players
-        for (i, player) in self.players.iter_mut().enumerate() {
-            player.hand = hands[i].clone();
-        }
-
-        // check if round is over or continue to next turn
-        let all_hands_empty = self.players.iter().all(|p| p.hand.is_empty());
-        if all_hands_empty {
+        if !all_hands_empty {
+            for (i, player) in self.players.iter_mut().enumerate() {
+                player.hand = hands[i].clone();
+            }
+            self.next_turn();
+        } else {
             if self.round < self.round_count {
                 self.start_new_round()?;
             }
-        } else {
-            self.next_turn();
         }
 
         Ok(())

@@ -250,16 +250,20 @@ pub async fn run_host_game() -> Result<(), GameError> {
                         }
                         GameHostEvent::AllPlayersSubmitted => {
                             crate::log::host("All players submitted, processing turn".to_string());
-                            if let Err(e) = game_host.process_turn() {
-                                crate::log::host(format!("Error processing turn: {}", e));
+                            match game_host.process_turn() {
+                                Ok(Some(_)) => break,
+                                Ok(None) => {
+                                    submitted = false;
+                                    ui_state.clear_selections();
+                                    ui_state.reset_for_new_turn();
+                                }
+                                Err(e) => {
+                                    crate::log::host(format!("Error processing turn: {}", e));
+                                }
                             }
-                            // Reset for next turn
-                            submitted = false;
-                            ui_state.clear_selections();
-                            ui_state.reset_for_new_turn();
                         }
-                        GameHostEvent::PlayerDisconnected { player_id, .. } => {
-                            crate::log::host(format!("Player {} disconnected, ending game", player_id));
+                        GameHostEvent::PlayerDisconnected { .. } | GameHostEvent::GameEnded { .. } => {
+                            crate::log::host("Game ended".to_string());
                             break;
                         }
                     }
@@ -284,15 +288,19 @@ pub async fn run_host_game() -> Result<(), GameError> {
                         match handle_game_input(key.code, &mut game_host, &mut ui_state, max_selections) {
                             InputAction::Quit => break,
                             InputAction::SubmitTurn => {
-                                // Check if all players have now submitted
                                 if game_host.state.game.all_players_selected() {
                                     crate::log::host("All players submitted after host, processing turn".to_string());
-                                    if let Err(e) = game_host.process_turn() {
-                                        crate::log::host(format!("Error processing turn: {}", e));
+                                    match game_host.process_turn() {
+                                        Ok(Some(_)) => break,
+                                        Ok(None) => {
+                                            submitted = false;
+                                            ui_state.clear_selections();
+                                            ui_state.reset_for_new_turn();
+                                        }
+                                        Err(e) => {
+                                            crate::log::host(format!("Error processing turn: {}", e));
+                                        }
                                     }
-                                    // Reset for next turn
-                                    ui_state.clear_selections();
-                                    ui_state.reset_for_new_turn();
                                 } else {
                                     submitted = true;
                                     crate::log::host("Host submitted turn".to_string());
