@@ -28,7 +28,7 @@ use std::fmt;
 
 macro_rules! define_card_kind {
     ($($variant:ident => $card:ty),* $(,)?) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
         pub enum CardKind {
             $($variant,)*
         }

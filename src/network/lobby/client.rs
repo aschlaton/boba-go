@@ -8,7 +8,7 @@ use libp2p::{
 };
 use std::error::Error;
 
-use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent};
+use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent, ClientRequest, HostResponse};
 use crate::network::Client;
 use super::protocol::{ClientMessage, HostMessage, LobbyPlayer};
 use crate::log;
@@ -66,9 +66,9 @@ impl Client<LobbyClientState> {
 
     /// Send join request to host
     fn send_join_request(&mut self, peer_id: PeerId) {
-        let request = ClientMessage::JoinRequest {
+        let request = ClientRequest::Lobby(ClientMessage::JoinRequest {
             player_name: self.state.player_name.clone(),
-        };
+        });
 
         self.swarm
             .behaviour_mut()
@@ -96,28 +96,30 @@ impl Client<LobbyClientState> {
                     match rr_event {
                         request_response::Event::Message { message, .. } => {
                             if let request_response::Message::Response { response, .. } = message {
-                                match response {
-                                    HostMessage::JoinResponse {
-                                        accepted,
-                                        player_id,
-                                        rejection_reason,
-                                        lobby_players,
-                                    } => {
-                                        if accepted {
-                                            self.state.player_id = player_id;
-                                            self.state.lobby_players = lobby_players.clone();
-                                            return Some(ClientEvent::JoinedLobby {
-                                                player_id: player_id.unwrap(),
-                                                lobby_players,
-                                            });
-                                        } else {
-                                            return Some(ClientEvent::JoinRejected {
-                                                reason: rejection_reason
-                                                    .unwrap_or_else(|| "Unknown reason".to_string()),
-                                            });
+                                if let HostResponse::Lobby(lobby_response) = response {
+                                    match lobby_response {
+                                        HostMessage::JoinResponse {
+                                            accepted,
+                                            player_id,
+                                            rejection_reason,
+                                            lobby_players,
+                                        } => {
+                                            if accepted {
+                                                self.state.player_id = player_id;
+                                                self.state.lobby_players = lobby_players.clone();
+                                                return Some(ClientEvent::JoinedLobby {
+                                                    player_id: player_id.unwrap(),
+                                                    lobby_players,
+                                                });
+                                            } else {
+                                                return Some(ClientEvent::JoinRejected {
+                                                    reason: rejection_reason
+                                                        .unwrap_or_else(|| "Unknown reason".to_string()),
+                                                });
+                                            }
                                         }
+                                        HostMessage::LobbyUpdate { .. } => {}
                                     }
-                                    HostMessage::LobbyUpdate { .. } => {}
                                 }
                             }
                         }

@@ -1,7 +1,16 @@
 use std::collections::HashMap;
-use libp2p::PeerId;
+use libp2p::{
+    futures::StreamExt,
+    gossipsub::IdentTopic,
+    swarm::{Swarm, SwarmEvent},
+    PeerId,
+};
 
+use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent, ClientRequest, HostResponse};
+use crate::network::Client;
 use crate::engine::{models::{CardKind, PlayerPublic}, state::{GameStatus, PlayerTurnState}};
+use super::protocol::{GameClientMessage, GameHostMessage, GameEndReason};
+use crate::log;
 
 pub struct GameClientState {
     pub player_id: usize,
@@ -111,5 +120,86 @@ impl GameClientState {
             .copied()
             .unwrap_or(PlayerTurnState::NotSelected)
     }
+}
+
+impl Client<GameClientState> {
+    pub fn new(
+        swarm: Swarm<BobaGoBehaviour>,
+        topic: IdentTopic,
+        player_id: usize,
+        hand: HashMap<CardKind, usize>,
+        players_public: Vec<PlayerPublic>,
+        game_status: GameStatus,
+    ) -> Self {
+        let state = GameClientState::new(player_id, hand, players_public, game_status);
+        Self {
+            swarm,
+            state,
+            topic,
+        }
+    }
+
+    // submit turn to host
+    pub fn submit_turn(&mut self, host_peer: PeerId) {
+        let message = ClientRequest::Game(GameClientMessage::SubmitTurn {
+            selected_cards: self.state.selected_cards.clone(),
+            remaining_hand: self.state.get_remaining_hand(),
+        });
+
+        self.swarm
+            .behaviour_mut()
+            .request_response
+            .send_request(&host_peer, message);
+
+        self.state.mark_turn_submitted();
+        log::client(format!("Submitted turn to host"));
+    }
+
+    // run event loop
+    pub async fn next_event(&mut self) -> Option<GameClientEvent> {
+        loop {
+            match self.swarm.select_next_some().await {
+                SwarmEvent::Behaviour(BobaGoBehaviourEvent::Gossipsub(gossipsub_event)) => {
+                    if let libp2p::gossipsub::Event::Message { message, .. } = gossipsub_event {
+                        if let Ok(json_str) = std::str::from_utf8(&message.data) {
+                            if let Ok(host_message) = serde_json::from_str::<GameHostMessage>(json_str) {
+                                match host_message {
+                                    GameHostMessage::GameUpdate { your_hand, players_public, game_status } => {
+                                        self.state.update_hand(your_hand);
+                                        self.state.update_players_public(players_public);
+                                        self.state.update_game_status(game_status.clone());
+                                        return Some(GameClientEvent::GameUpdated { game_status });
+                                    }
+                                    GameHostMessage::GameEnded { final_scores, reason } => {
+                                        return Some(GameClientEvent::GameEnded { final_scores, reason });
+                                    }
+                                    GameHostMessage::Error { message } => {
+                                        log::client(format!("Error from host: {}", message));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                    log::client(format!("Connected to {peer_id}"));
+                }
+                SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                    log::client(format!("Disconnected from {peer_id}"));
+                    if Some(peer_id) == self.state.host_peer_id {
+                        return Some(GameClientEvent::Disconnected);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum GameClientEvent {
+    GameUpdated { game_status: GameStatus },
+    GameEnded { final_scores: Vec<(usize, f32)>, reason: GameEndReason },
+    Disconnected,
 }
 

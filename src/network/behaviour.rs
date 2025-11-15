@@ -3,14 +3,28 @@ use libp2p::{
     swarm::NetworkBehaviour,
     StreamProtocol,
 };
+use serde::{Deserialize, Serialize};
 use std::io;
 
 use super::lobby::protocol::{ClientMessage, HostMessage};
+use super::game::protocol::{GameClientMessage, GameHostMessage};
+
+// unified message enums for lobby + game
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClientRequest {
+    Lobby(ClientMessage),
+    Game(GameClientMessage),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HostResponse {
+    Lobby(HostMessage),
+    Game(GameHostMessage),
+}
 
 #[derive(NetworkBehaviour)]
-
 pub struct BobaGoBehaviour {
-    pub request_response: request_response::cbor::Behaviour<ClientMessage, HostMessage>,
+    pub request_response: request_response::cbor::Behaviour<ClientRequest, HostResponse>,
     pub gossipsub: gossipsub::Behaviour,
 }
 

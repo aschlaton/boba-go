@@ -8,7 +8,7 @@ use libp2p::{
 };
 use std::error::Error;
 
-use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent};
+use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent, ClientRequest, HostResponse};
 use crate::network::Host;
 use super::protocol::{ClientMessage, HostMessage, LobbyPlayer};
 use super::state::LobbyHostState;
@@ -106,13 +106,13 @@ impl Host<LobbyHostState> {
     }
 
     /// Handle request-response network events
-    fn handle_request_response(&mut self, rr_event: libp2p::request_response::Event<ClientMessage, HostMessage>) -> Option<HostEvent> {
+    fn handle_request_response(&mut self, rr_event: libp2p::request_response::Event<ClientRequest, HostResponse>) -> Option<HostEvent> {
         use libp2p::request_response;
 
         match rr_event {
             request_response::Event::Message { peer, message, .. } => {
                 if let request_response::Message::Request {
-                    request: ClientMessage::JoinRequest { player_name },
+                    request: ClientRequest::Lobby(ClientMessage::JoinRequest { player_name }),
                     channel,
                     ..
                 } = message
@@ -122,7 +122,7 @@ impl Host<LobbyHostState> {
                     self.swarm
                         .behaviour_mut()
                         .request_response
-                        .send_response(channel, response)
+                        .send_response(channel, HostResponse::Lobby(response))
                         .ok();
 
                     return event;

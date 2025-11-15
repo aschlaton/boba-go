@@ -107,7 +107,7 @@ pub async fn run_host_game() -> Result<(), GameError> {
     }
 
     // Create host lobby
-    let mut lobby: Host<LobbyHostState> = Host::new(room_name.clone(), host_name.clone()).await
+    let mut lobby = Host::<LobbyHostState>::new(room_name.clone(), host_name.clone()).await
         .map_err(|e| GameError::Other(e.to_string()))?;
     lobby.listen("/ip4/0.0.0.0/tcp/0")
         .map_err(|e| GameError::Other(e.to_string()))?;
@@ -291,7 +291,7 @@ pub async fn run_join_game() -> Result<(), GameError> {
     }
 
     // Create client lobby and connect
-    let mut lobby: Client<LobbyClientState> = Client::new("default".to_string(), player_name.clone()).await
+    let mut lobby = Client::<LobbyClientState>::new("default".to_string(), player_name.clone()).await
         .map_err(|e| GameError::Other(e.to_string()))?;
     lobby.connect(&host_address)
         .map_err(|e| GameError::Other(e.to_string()))?;

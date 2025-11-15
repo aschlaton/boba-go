@@ -6,7 +6,7 @@ use libp2p::{
 };
 use std::collections::HashMap;
 
-use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent};
+use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent, ClientRequest, HostResponse};
 use crate::network::Host;
 use crate::engine::{Game, models::CardKind};
 use super::state::GameHostState;
@@ -142,14 +142,14 @@ impl Host<GameHostState> {
     // handle request-response network events
     fn handle_request_response(
         &mut self,
-        rr_event: libp2p::request_response::Event<GameClientMessage, GameHostMessage>,
+        rr_event: libp2p::request_response::Event<ClientRequest, HostResponse>,
     ) -> Option<GameHostEvent> {
         use libp2p::request_response;
 
         match rr_event {
             request_response::Event::Message { peer, message, .. } => {
                 if let request_response::Message::Request {
-                    request: GameClientMessage::SubmitTurn { selected_cards, remaining_hand },
+                    request: ClientRequest::Game(GameClientMessage::SubmitTurn { selected_cards, remaining_hand }),
                     channel,
                     ..
                 } = message
@@ -159,7 +159,7 @@ impl Host<GameHostState> {
                     self.swarm
                         .behaviour_mut()
                         .request_response
-                        .send_response(channel, response)
+                        .send_response(channel, HostResponse::Game(response))
                         .ok();
 
                     return event;

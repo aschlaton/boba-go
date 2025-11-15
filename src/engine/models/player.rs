@@ -22,7 +22,7 @@ impl Player {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlayerPublic {
     pub id: usize,
     pub name: String,

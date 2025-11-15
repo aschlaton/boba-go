@@ -6,4 +6,5 @@ pub mod game;
 
 pub use host::Host;
 pub use client::Client;
+pub use behaviour::{BobaGoBehaviour, ClientRequest, HostResponse};
 pub use lobby::{LobbyHostState, LobbyClientState, ClientEvent, HostEvent, ClientMessage, HostMessage, LobbyPlayer};
