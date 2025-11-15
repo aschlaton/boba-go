@@ -233,7 +233,7 @@ impl Host<GameHostState> {
 
     // handle connection closed event
     fn handle_connection_closed(&mut self, peer_id: PeerId) -> Option<GameHostEvent> {
-        log::host(format!("Connection closed with {peer_id}"));
+        super::super::events::log_host_connection_closed(peer_id);
         if let Some(player_id) = self.state.remove_player(&peer_id) {
             self.broadcast_game_ended(GameEndReason::PlayerDisconnected { player_id });
             return Some(GameHostEvent::PlayerDisconnected { peer_id, player_id });
@@ -251,7 +251,7 @@ impl Host<GameHostState> {
                     }
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    log::host(format!("Connection established with {peer_id}"));
+                    super::super::events::handle_host_connection_established(&mut self.swarm, peer_id);
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
                     if let Some(event) = self.handle_connection_closed(peer_id) {

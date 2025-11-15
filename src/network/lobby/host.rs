@@ -134,8 +134,8 @@ impl Host<LobbyHostState> {
     }
 
     /// Handle connection closed event
-    fn handle_connection_closed(&mut self, peer_id: PeerId, cause: &Option<libp2p::swarm::ConnectionError>) -> Option<HostEvent> {
-        log::host(format!("Connection closed with {peer_id}: {cause:?}"));
+    fn handle_connection_closed(&mut self, peer_id: PeerId, _cause: &Option<libp2p::swarm::ConnectionError>) -> Option<HostEvent> {
+        super::super::events::log_host_connection_closed(peer_id);
         if self.state.remove_player(&peer_id).is_some() {
             self.broadcast_lobby_update();
             return Some(HostEvent::PlayerLeft { peer_id });
@@ -157,8 +157,7 @@ impl Host<LobbyHostState> {
                     }
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    log::host(format!("Connection established with {peer_id}"));
-                    self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                    super::super::events::handle_host_connection_established(&mut self.swarm, peer_id);
                 }
                 SwarmEvent::Behaviour(BobaGoBehaviourEvent::Gossipsub(
                     libp2p::gossipsub::Event::Subscribed { peer_id, topic }

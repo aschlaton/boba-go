@@ -4,6 +4,7 @@ pub mod client;
 pub mod lobby;
 pub mod game;
 pub mod transition;
+pub mod events;
 
 pub use host::Host;
 pub use client::Client;

@@ -177,8 +177,7 @@ impl Client<LobbyClientState> {
                     }
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    log::client(format!("Connected to host: {peer_id}"));
-                    self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                    super::super::events::handle_client_connection_established(&mut self.swarm, peer_id);
                     log::client(format!("Client topics: {:?}", self.swarm.behaviour().gossipsub.topics().collect::<Vec<_>>()));
                     self.state.host_peer_id = Some(peer_id);
                     if !self.state.join_request_sent {
@@ -187,6 +186,7 @@ impl Client<LobbyClientState> {
                     }
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                    super::super::events::log_client_connection_closed(peer_id);
                     if Some(peer_id) == self.state.host_peer_id {
                         return Some(ClientEvent::Disconnected);
                     }
