@@ -4,9 +4,12 @@ use crate::engine::{Game, GameConfig, GameError, ScoreBreakdown, PlayerTurnState
 
 mod views;
 mod network_game;
+mod game_ui;
+mod input;
 
-use views::{render_hand, render_my_cards, render_player_cards};
 pub use network_game::{run_host_game, run_join_game};
+pub use game_ui::{GameView, GameUIState, GameInterface, render_game_ui};
+pub use input::{handle_game_input, calculate_max_selections, InputAction};
 
 #[derive(Copy, Clone)]
 pub enum StartAction {
@@ -17,12 +20,6 @@ pub enum StartAction {
     Quit,
 }
 
-#[derive(Copy, Clone, PartialEq)]
-enum GameView {
-    Hand,
-    MyCards,
-    PlayerCards,
-}
 
 const LEFT_ASCII: &str = include_str!("assets/title.txt");
 const RIGHT_ASCII: &str = include_str!("assets/boba_art.txt");
@@ -333,15 +330,8 @@ pub fn run_local_game() -> Result<(), GameError> {
     };
 
     let mut current_player_id = 0;
-    let mut hand_selection_index = 0;
-    let mut my_cards_selection_index = 0;
-    let mut player_selections: HashMap<usize, (HashMap<CardKind, usize>, HashMap<CardKind, usize>)> = HashMap::new();
-    let mut drink_tray_activated: HashMap<usize, bool> = HashMap::new();
+    let mut ui_state = GameUIState::new();
     let mut show_scores = false;
-    let mut current_view = GameView::Hand;
-    let mut viewing_player_id = 0;
-    let mut player_list_index = 0;
-    let mut view_history: Vec<GameView> = Vec::new();
 
     let result = loop {
         let status = game.get_game_status();
@@ -374,94 +364,12 @@ pub fn run_local_game() -> Result<(), GameError> {
         let player_state = game.get_player_turn_state(current_player_id).unwrap_or(PlayerTurnState::NotSelected);
         
         if player_state == PlayerTurnState::NotSelected {
-            // Current player needs to select
-            let hand_result = game.get_player_hand(current_player_id);
-            let hand = match hand_result {
-                Ok(h) => h,
-                Err(_) => {
-                    break Err(GameError::InvalidConfig);
-                }
-            };
-
-            // Check if player has activated Drink Tray this turn
-            let has_drink_tray_activated = drink_tray_activated.get(&current_player_id).copied().unwrap_or(false);
+            let has_drink_tray_activated = ui_state.drink_tray_activated.get(&current_player_id).copied().unwrap_or(false);
             let max_selections = if has_drink_tray_activated { 2 } else { 1 };
-            let selected_cards = player_selections.entry(current_player_id)
-                .or_insert_with(|| (HashMap::new(), HashMap::new()))
-                .0.clone();
-            let current_selections: usize = selected_cards.values().sum();
 
             let _ = terminal.draw(|f| {
-                let area = f.area();
-                
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3), // Status bar
-                        Constraint::Min(10),   // Main content
-                        Constraint::Length(3), // Footer/controls
-                    ])
-                    .split(area);
-
-                // Status bar
-                let status = game.get_game_status();
-                let status_text = format!(
-                    "Round {}/{} | Turn {} | Passing: {:?}",
-                    status.round,
-                    status.round_count,
-                    status.turn,
-                    status.pass_direction
-                );
-                let status_para = Paragraph::new(status_text)
-                    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                    .block(Block::default().borders(Borders::ALL).title("Game Status"));
-                f.render_widget(status_para, chunks[0]);
-
-                // Main content - render based on current view
-                let player_selected = player_selections.get(&current_player_id)
-                    .map(|(sel, _)| sel);
-                
-                match current_view {
-                    GameView::Hand => {
-                        render_hand(f, &game, current_player_id, chunks[1], player_selected, hand_selection_index);
-                    }
-                    GameView::MyCards => {
-                        render_my_cards(f, &game, current_player_id, chunks[1], my_cards_selection_index);
-                    }
-                    GameView::PlayerCards => {
-                        render_player_cards(f, &game, viewing_player_id, chunks[1], player_list_index);
-                    }
-                }
-
-                // Footer with selection info and view controls
-                let view_hint = match current_view {
-                    GameView::Hand => "H: Hand  M: My Cards  P: Player Cards",
-                    GameView::MyCards => "H: Hand  M: My Cards  P: Player Cards",
-                    GameView::PlayerCards => "H: Hand  M: My Cards  P: Player Cards  ↑/↓: Select Player",
-                };
-                let selection_text = if current_selections == 0 {
-                    if has_drink_tray_activated {
-                        format!("{} | Select a card ({} remaining) | U: Undo Drink Tray", view_hint, max_selections)
-                    } else {
-                        format!("{} | Select a card ({} remaining)", view_hint, max_selections)
-                    }
-                } else if current_selections < max_selections {
-                    if has_drink_tray_activated {
-                        format!("{} | Select {} more card(s) ({} total) | U: Undo Drink Tray", view_hint, max_selections - current_selections, max_selections)
-                    } else {
-                        format!("{} | Select {} more card(s) ({} total)", view_hint, max_selections - current_selections, max_selections)
-                    }
-                } else {
-                    if has_drink_tray_activated {
-                        format!("{} | Press Enter to confirm selection | U: Undo Drink Tray", view_hint)
-                    } else {
-                        format!("{} | Press Enter to confirm selection", view_hint)
-                    }
-                };
-                let footer = Paragraph::new(selection_text)
-                    .alignment(Alignment::Center)
-                    .block(Block::default().borders(Borders::ALL));
-                f.render_widget(footer, chunks[2]);
+                let mut game_view = crate::engine::GamePlayerView::new(&mut game, current_player_id);
+                render_game_ui(f, &mut game_view, &ui_state, false, max_selections);
             });
 
             if let Ok(true) = event::poll(std::time::Duration::from_millis(200)) {
@@ -470,63 +378,63 @@ pub fn run_local_game() -> Result<(), GameError> {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
                             KeyCode::Char('h') => {
-                                if current_view != GameView::Hand {
-                                    view_history.push(current_view);
-                                    current_view = GameView::Hand;
+                                if ui_state.current_view != GameView::Hand {
+                                    ui_state.view_history.push(ui_state.current_view);
+                                    ui_state.current_view = GameView::Hand;
                                 }
                             }
                             KeyCode::Char('m') => {
-                                if current_view != GameView::MyCards {
-                                    view_history.push(current_view);
-                                    current_view = GameView::MyCards;
-                                    my_cards_selection_index = 0;
+                                if ui_state.current_view != GameView::MyCards {
+                                    ui_state.view_history.push(ui_state.current_view);
+                                    ui_state.current_view = GameView::MyCards;
+                                    ui_state.my_cards_selection_index = 0;
                                 }
                             }
                             KeyCode::Char('p') => {
-                                if current_view != GameView::PlayerCards {
-                                    view_history.push(current_view);
-                                    current_view = GameView::PlayerCards;
-                                    viewing_player_id = player_list_index;
+                                if ui_state.current_view != GameView::PlayerCards {
+                                    ui_state.view_history.push(ui_state.current_view);
+                                    ui_state.current_view = GameView::PlayerCards;
+                                    ui_state.viewing_player_id = ui_state.player_list_index;
                                 }
                             }
                             KeyCode::Left => {
                                 // Go back in navigation history
-                                if let Some(previous_view) = view_history.pop() {
-                                    current_view = previous_view;
+                                if let Some(previous_view) = ui_state.view_history.pop() {
+                                    ui_state.current_view = previous_view;
                                 }
                             }
                             KeyCode::Right => {
                                 // Cycle forward through views
-                                current_view = match current_view {
+                                ui_state.current_view = match ui_state.current_view {
                                     GameView::Hand => {
-                                        view_history.push(GameView::Hand);
+                                        ui_state.view_history.push(GameView::Hand);
                                         GameView::MyCards
                                     }
                                     GameView::MyCards => {
-                                        view_history.push(GameView::MyCards);
+                                        ui_state.view_history.push(GameView::MyCards);
                                         GameView::PlayerCards
                                     }
                                     GameView::PlayerCards => {
-                                        view_history.push(GameView::PlayerCards);
+                                        ui_state.view_history.push(GameView::PlayerCards);
                                         GameView::Hand
                                     }
                                 };
                                 // Reset selection indices when changing views
-                                match current_view {
-                                    GameView::MyCards => my_cards_selection_index = 0,
-                                    GameView::PlayerCards => player_list_index = 0,
+                                match ui_state.current_view {
+                                    GameView::MyCards => ui_state.my_cards_selection_index = 0,
+                                    GameView::PlayerCards => ui_state.player_list_index = 0,
                                     _ => {}
                                 }
                             }
                             KeyCode::Up => {
-                                if current_view == GameView::PlayerCards {
-                                    if player_list_index == 0 {
-                                        player_list_index = game.num_players() - 1;
+                                if ui_state.current_view == GameView::PlayerCards {
+                                    if ui_state.player_list_index == 0 {
+                                        ui_state.player_list_index = game.num_players() - 1;
                                     } else {
-                                        player_list_index -= 1;
+                                        ui_state.player_list_index -= 1;
                                     }
-                                    viewing_player_id = player_list_index;
-                                } else if current_view == GameView::MyCards {
+                                    ui_state.viewing_player_id = ui_state.player_list_index;
+                                } else if ui_state.current_view == GameView::MyCards {
                                     // Navigate my cards
                                     let player_public = game.get_player_public(current_player_id).unwrap();
                                     let mut card_count = 0;
@@ -541,32 +449,33 @@ pub fn run_local_game() -> Result<(), GameError> {
                                         }
                                     }
                                     if card_count > 0 {
-                                        if my_cards_selection_index == 0 {
-                                            my_cards_selection_index = card_count - 1;
+                                        if ui_state.my_cards_selection_index == 0 {
+                                            ui_state.my_cards_selection_index = card_count - 1;
                                         } else {
-                                            my_cards_selection_index -= 1;
+                                            ui_state.my_cards_selection_index -= 1;
                                         }
                                     }
                                 } else {
-                                    // Navigate hand
-                                    let hand_vec: Vec<(CardKind, usize)> = hand.iter()
-                                        .filter(|(_, count)| **count > 0)
-                                        .map(|(k, v)| (*k, *v))
-                                        .collect();
-                                    if !hand_vec.is_empty() {
-                                        if hand_selection_index == 0 {
-                                            hand_selection_index = hand_vec.len() - 1;
-                                        } else {
-                                            hand_selection_index -= 1;
+                                    if let Ok(hand) = game.get_player_hand(current_player_id) {
+                                        let hand_vec: Vec<(CardKind, usize)> = hand.iter()
+                                            .filter(|(_, count)| **count > 0)
+                                            .map(|(k, v)| (*k, *v))
+                                            .collect();
+                                        if !hand_vec.is_empty() {
+                                            if ui_state.hand_selection_index == 0 {
+                                                ui_state.hand_selection_index = hand_vec.len() - 1;
+                                            } else {
+                                                ui_state.hand_selection_index -= 1;
+                                            }
                                         }
                                     }
                                 }
                             }
                             KeyCode::Down => {
-                                if current_view == GameView::PlayerCards {
-                                    player_list_index = (player_list_index + 1) % game.num_players();
-                                    viewing_player_id = player_list_index;
-                                } else if current_view == GameView::MyCards {
+                                if ui_state.current_view == GameView::PlayerCards {
+                                    ui_state.player_list_index = (ui_state.player_list_index + 1) % game.num_players();
+                                    ui_state.viewing_player_id = ui_state.player_list_index;
+                                } else if ui_state.current_view == GameView::MyCards {
                                     // Navigate my cards
                                     let player_public = game.get_player_public(current_player_id).unwrap();
                                     let mut card_count = 0;
@@ -581,41 +490,43 @@ pub fn run_local_game() -> Result<(), GameError> {
                                         }
                                     }
                                     if card_count > 0 {
-                                        my_cards_selection_index = (my_cards_selection_index + 1) % card_count;
+                                        ui_state.my_cards_selection_index = (ui_state.my_cards_selection_index + 1) % card_count;
                                     }
                                 } else {
-                                    // Navigate hand
-                                    let hand_vec: Vec<(CardKind, usize)> = hand.iter()
-                                        .filter(|(_, count)| **count > 0)
-                                        .map(|(k, v)| (*k, *v))
-                                        .collect();
-                                    if !hand_vec.is_empty() {
-                                        hand_selection_index = (hand_selection_index + 1) % hand_vec.len();
+                                    if let Ok(hand) = game.get_player_hand(current_player_id) {
+                                        let hand_vec: Vec<(CardKind, usize)> = hand.iter()
+                                            .filter(|(_, count)| **count > 0)
+                                            .map(|(k, v)| (*k, *v))
+                                            .collect();
+                                        if !hand_vec.is_empty() {
+                                            ui_state.hand_selection_index = (ui_state.hand_selection_index + 1) % hand_vec.len();
+                                        }
                                     }
                                 }
                             }
                             KeyCode::Char(' ') => {
-                                if current_view == GameView::Hand {
-                                    let hand_vec: Vec<(CardKind, usize)> = hand.iter()
-                                        .filter(|(_, count)| **count > 0)
-                                        .map(|(k, v)| (*k, *v))
-                                        .collect();
-                                    
-                                    if !hand_vec.is_empty() && hand_selection_index < hand_vec.len() {
-                                        let (card_kind, available_count) = hand_vec[hand_selection_index];
-                                        
-                                        let player_selected = player_selections.entry(current_player_id)
+                                if ui_state.current_view == GameView::Hand {
+                                    if let Ok(hand) = game.get_player_hand(current_player_id) {
+                                        let hand_vec: Vec<(CardKind, usize)> = hand.iter()
+                                            .filter(|(_, count)| **count > 0)
+                                            .map(|(k, v)| (*k, *v))
+                                            .collect();
+
+                                    if !hand_vec.is_empty() && ui_state.hand_selection_index < hand_vec.len() {
+                                        let (card_kind, available_count) = hand_vec[ui_state.hand_selection_index];
+
+                                        let player_selected = ui_state.player_selections.entry(current_player_id)
                                             .or_insert_with(|| (HashMap::new(), HashMap::new()));
                                         let already_selected = player_selected.0.get(&card_kind).copied().unwrap_or(0);
-                                        
+
                                         // Recalculate current selections from the actual selection state
                                         let current_selections_count: usize = player_selected.0.values().sum();
-                                        
+
                                         if already_selected > 0 {
                                             // Check if we can select more of this card type
                                             let can_select_more = current_selections_count < max_selections;
                                             let has_available = already_selected < available_count;
-                                            
+
                                             if can_select_more && has_available {
                                                 // Select more copies of this card type
                                                 let to_select = (max_selections - current_selections_count).min(available_count - already_selected);
@@ -635,11 +546,12 @@ pub fn run_local_game() -> Result<(), GameError> {
                                             *player_selected.0.entry(card_kind).or_insert(0) += to_select;
                                         }
                                     }
+                                    }
                                 }
                             }
                             KeyCode::Enter => {
                                 // Use Drink Tray from My Cards view (move from public_cards to hand)
-                                if current_view == GameView::MyCards {
+                                if ui_state.current_view == GameView::MyCards {
                                     let player_public = game.get_player_public(current_player_id).unwrap();
                                     let mut card_list: Vec<(CardKind, usize, bool)> = Vec::new();
                                     for (card_kind, count) in &player_public.public_cards {
@@ -652,9 +564,9 @@ pub fn run_local_game() -> Result<(), GameError> {
                                             card_list.push((*card_kind, *count, true));
                                         }
                                     }
-                                    
-                                    if !card_list.is_empty() && my_cards_selection_index < card_list.len() {
-                                        let (card_kind, _, is_boosted) = card_list[my_cards_selection_index];
+
+                                    if !card_list.is_empty() && ui_state.my_cards_selection_index < card_list.len() {
+                                        let (card_kind, _, is_boosted) = card_list[ui_state.my_cards_selection_index];
                                         // Only allow using Drink Tray (not boosted fruit teas)
                                         if card_kind == CardKind::DrinkTray && !is_boosted {
                                             // Move Drink Tray from public_cards to hand and activate it
@@ -667,20 +579,20 @@ pub fn run_local_game() -> Result<(), GameError> {
                                                 // Add to hand
                                                 *player.hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
                                                 // Activate Drink Tray for this turn
-                                                drink_tray_activated.insert(current_player_id, true);
+                                                ui_state.drink_tray_activated.insert(current_player_id, true);
                                                 // Navigate to Hand view
-                                                view_history.push(GameView::MyCards);
-                                                current_view = GameView::Hand;
-                                                hand_selection_index = 0;
+                                                ui_state.view_history.push(GameView::MyCards);
+                                                ui_state.current_view = GameView::Hand;
+                                                ui_state.hand_selection_index = 0;
                                             }
                                         }
                                     }
-                                } else if current_view == GameView::Hand {
+                                } else if ui_state.current_view == GameView::Hand {
                                     // Confirm selection - only works in Hand view
-                                    let player_selected = player_selections.entry(current_player_id)
+                                    let player_selected = ui_state.player_selections.entry(current_player_id)
                                         .or_insert_with(|| (HashMap::new(), HashMap::new()));
                                     let total_selected: usize = player_selected.0.values().sum();
-                                    
+
                                     if total_selected >= max_selections {
                                         // Get fresh hand (in case Drink Tray was activated this turn)
                                         let current_hand_result = game.get_player_hand(current_player_id);
@@ -691,7 +603,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                                 continue;
                                             }
                                         };
-                                        
+
                                         // Build remaining hand (current_hand minus selected cards)
                                         let mut remaining_hand = current_hand.clone();
                                         for (kind, count) in &player_selected.0 {
@@ -702,7 +614,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                                 }
                                             }
                                         }
-                                        
+
                                         // Validate submission
                                         if let Err(_) = game.validate_hand_submission(current_player_id, &player_selected.0, &remaining_hand) {
                                             // Reset selection on validation error
@@ -710,33 +622,33 @@ pub fn run_local_game() -> Result<(), GameError> {
                                         } else {
                                             // Store remaining hand
                                             player_selected.1 = remaining_hand;
-                                            
+
                                             // Mark player as selected
                                             if let Err(_) = game.mark_player_selected(current_player_id) {
                                                 break Err(GameError::InvalidConfig);
                                             }
-                                            
+
                                             // Reset Drink Tray activation for this player
-                                            drink_tray_activated.remove(&current_player_id);
-                                            
+                                            ui_state.drink_tray_activated.remove(&current_player_id);
+
                                             // Move to next player
                                             current_player_id = (current_player_id + 1) % game.num_players();
-                                            hand_selection_index = 0;
+                                            ui_state.hand_selection_index = 0;
                                         }
                                     }
                                 }
                             }
                             KeyCode::Backspace | KeyCode::Char('r') => {
                                 // Reset selection for current player
-                                if current_view == GameView::Hand {
-                                    if let Some(player_selected) = player_selections.get_mut(&current_player_id) {
+                                if ui_state.current_view == GameView::Hand {
+                                    if let Some(player_selected) = ui_state.player_selections.get_mut(&current_player_id) {
                                         player_selected.0.clear();
                                     }
                                 }
                             }
                             KeyCode::Char('u') => {
                                 // Unuse Drink Tray (move from hand back to public_cards)
-                                if current_view == GameView::Hand && has_drink_tray_activated {
+                                if ui_state.current_view == GameView::Hand && has_drink_tray_activated {
                                     let player = &mut game.players[current_player_id];
                                     if let Some(drink_tray_count) = player.hand.get_mut(&CardKind::DrinkTray) {
                                         if *drink_tray_count > 0 {
@@ -747,11 +659,11 @@ pub fn run_local_game() -> Result<(), GameError> {
                                             // Move back to public_cards
                                             *player.public_cards.entry(CardKind::DrinkTray).or_insert(0) += 1;
                                             // Deactivate Drink Tray
-                                            drink_tray_activated.remove(&current_player_id);
+                                            ui_state.drink_tray_activated.remove(&current_player_id);
                                             // Navigate to My Cards view
-                                            view_history.push(GameView::Hand);
-                                            current_view = GameView::MyCards;
-                                            my_cards_selection_index = 0;
+                                            ui_state.view_history.push(GameView::Hand);
+                                            ui_state.current_view = GameView::MyCards;
+                                            ui_state.my_cards_selection_index = 0;
                                         }
                                     }
                                 }
@@ -767,23 +679,23 @@ pub fn run_local_game() -> Result<(), GameError> {
                 // Build submissions for all players
                 let mut submissions = Vec::new();
                 for player_id in 0..game.num_players() {
-                    if let Some((selected, remaining)) = player_selections.get(&player_id) {
+                    if let Some((selected, remaining)) = ui_state.player_selections.get(&player_id) {
                         submissions.push(Some((selected.clone(), remaining.clone())));
                     } else {
                         // Player didn't have a selection stored, skip them
                         submissions.push(None);
                     }
                 }
-                
+
                 // Process the turn (this handles passing hands, on_draft actions, and calling next_turn/start_new_round)
                 if let Err(e) = game.process_turn(submissions) {
                     break Err(e);
                 }
-                
+
                 // Clear selections
-                player_selections.clear();
+                ui_state.player_selections.clear();
                 current_player_id = 0;
-                hand_selection_index = 0;
+                ui_state.hand_selection_index = 0;
             } else {
                 // Wait for other players (in local game, rotate through players)
                 current_player_id = (current_player_id + 1) % game.num_players();

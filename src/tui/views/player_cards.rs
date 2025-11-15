@@ -1,4 +1,4 @@
-use crate::engine::Game;
+use crate::tui::GameInterface;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -7,9 +7,9 @@ use ratatui::{
     Frame,
 };
 
-pub fn render_player_cards(
+pub fn render_player_cards<G: GameInterface>(
     f: &mut Frame,
-    game: &Game,
+    game: &G,
     viewing_player_id: usize,
     area: Rect,
     player_list_index: usize,

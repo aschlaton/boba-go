@@ -206,3 +206,31 @@ pub enum GameClientEvent {
     Disconnected,
 }
 
+impl crate::tui::GameInterface for Client<GameClientState> {
+    fn get_hand(&self) -> HashMap<CardKind, usize> {
+        self.state.hand.clone()
+    }
+
+    fn get_game_status(&self) -> crate::engine::state::GameStatus {
+        self.state.game_status.clone()
+    }
+
+    fn get_players_public(&self) -> Vec<crate::engine::models::PlayerPublic> {
+        self.state.players_public.clone()
+    }
+
+    fn submit_turn(&mut self, selected: HashMap<CardKind, usize>, _remaining: HashMap<CardKind, usize>) -> Result<(), String> {
+        if let Some(host_peer) = self.state.host_peer_id {
+            self.state.selected_cards = selected;
+            Client::<GameClientState>::submit_turn(self, host_peer);
+            Ok(())
+        } else {
+            Err("No host connected".to_string())
+        }
+    }
+
+    fn get_player_id(&self) -> usize {
+        self.state.player_id
+    }
+}
+

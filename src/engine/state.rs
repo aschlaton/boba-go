@@ -607,3 +607,49 @@ impl Game {
         }
     }
 }
+
+/// Wrapper for Game that provides a player-specific view
+pub struct GamePlayerView<'a> {
+    pub game: &'a mut Game,
+    pub player_id: usize,
+}
+
+impl<'a> GamePlayerView<'a> {
+    pub fn new(game: &'a mut Game, player_id: usize) -> Self {
+        Self { game, player_id }
+    }
+}
+
+impl<'a> crate::tui::GameInterface for GamePlayerView<'a> {
+    fn get_hand(&self) -> HashMap<CardKind, usize> {
+        self.game.get_player_hand(self.player_id)
+            .map(|h| h.clone())
+            .unwrap_or_default()
+    }
+
+    fn get_game_status(&self) -> GameStatus {
+        self.game.get_game_status()
+    }
+
+    fn get_players_public(&self) -> Vec<PlayerPublic> {
+        self.game.get_players_public()
+    }
+
+    fn submit_turn(&mut self, selected: HashMap<CardKind, usize>, remaining: HashMap<CardKind, usize>) -> Result<(), String> {
+        self.game.validate_hand_submission(self.player_id, &selected, &remaining)
+            .map_err(|e| format!("{:?}", e))?;
+        self.game.mark_player_selected(self.player_id)
+            .map_err(|e| format!("{:?}", e))?;
+
+        // Update the player's hand with the remaining cards
+        if let Some(player) = self.game.players.get_mut(self.player_id) {
+            player.hand = remaining;
+        }
+
+        Ok(())
+    }
+
+    fn get_player_id(&self) -> usize {
+        self.player_id
+    }
+}

@@ -4,5 +4,5 @@ pub mod models;
 pub mod state;
 
 pub use models::{Card, CardKind, GameConfig, OnDraftActionFn, Player, PlayerPublic};
-pub use state::{Game, GameError, GameStatus, PassDirection, PlayerTurnState, ScoreBreakdown, CategoryScore, SetBonus};
+pub use state::{Game, GameError, GameStatus, PassDirection, PlayerTurnState, ScoreBreakdown, CategoryScore, SetBonus, GamePlayerView};
 pub use deck::Deck;

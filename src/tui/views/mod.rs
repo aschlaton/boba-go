@@ -7,5 +7,4 @@ pub mod lobby;
 pub use hand::render_hand;
 pub use my_cards::render_my_cards;
 pub use player_cards::render_player_cards;
-pub use lobby::{render_host_lobby, render_client_lobby, ClientLobbyState};
 

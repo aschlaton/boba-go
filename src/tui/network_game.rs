@@ -16,6 +16,7 @@ use tokio::time::sleep;
 
 use crate::engine::GameError;
 use crate::network::{Host, Client, lobby::{LobbyHostState, LobbyClientState}};
+use super::game_ui::GameInterface;
 
 /// Host a network game
 pub async fn run_host_game() -> Result<(), GameError> {
@@ -235,7 +236,11 @@ pub async fn run_host_game() -> Result<(), GameError> {
 
         crate::log::host("Game started! Waiting for player submissions...".to_string());
 
+        let mut ui_state = super::game_ui::GameUIState::new();
+        let mut submitted = false;
+
         loop {
+            // Poll for network events (non-blocking)
             tokio::select! {
                 Some(event) = game_host.next_event() => {
                     use crate::network::GameHostEvent;
@@ -248,6 +253,10 @@ pub async fn run_host_game() -> Result<(), GameError> {
                             if let Err(e) = game_host.process_turn() {
                                 crate::log::host(format!("Error processing turn: {}", e));
                             }
+                            // Reset for next turn
+                            submitted = false;
+                            ui_state.clear_selections();
+                            ui_state.reset_for_new_turn();
                         }
                         GameHostEvent::PlayerDisconnected { player_id, .. } => {
                             crate::log::host(format!("Player {} disconnected, ending game", player_id));
@@ -255,7 +264,126 @@ pub async fn run_host_game() -> Result<(), GameError> {
                         }
                     }
                 }
-                _ = sleep(Duration::from_millis(50)) => {}
+                _ = sleep(Duration::from_millis(16)) => {
+                    // Timeout to keep UI responsive
+                }
+            }
+
+            // Render game UI
+            let has_drink_tray = ui_state.drink_tray_activated.get(&game_host.get_player_id()).copied().unwrap_or(false);
+            let max_selections = if has_drink_tray { 2 } else { 1 };
+            terminal.draw(|f| {
+                super::game_ui::render_game_ui(f, &game_host, &ui_state, submitted, max_selections);
+            }).map_err(|e| GameError::Other(e.to_string()))?;
+
+            // Handle input (non-blocking poll)
+            if event::poll(Duration::from_millis(10)).map_err(|e| GameError::Other(e.to_string()))? {
+                if let Event::Key(key) = event::read().map_err(|e| GameError::Other(e.to_string()))? {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') => break,
+                            KeyCode::Char('h') => {
+                                ui_state.current_view = super::game_ui::GameView::Hand;
+                            }
+                            KeyCode::Char('m') => {
+                                ui_state.current_view = super::game_ui::GameView::MyCards;
+                            }
+                            KeyCode::Char('p') => {
+                                ui_state.current_view = super::game_ui::GameView::PlayerCards;
+                            }
+                            KeyCode::Up => {
+                                use super::game_ui::GameView;
+                                match ui_state.current_view {
+                                    GameView::Hand => {
+                                        let hand = game_host.get_hand();
+                                        let hand_vec: Vec<_> = hand.iter().filter(|(_, c)| **c > 0).collect();
+                                        if !hand_vec.is_empty() {
+                                            ui_state.hand_selection_index = if ui_state.hand_selection_index == 0 {
+                                                hand_vec.len() - 1
+                                            } else {
+                                                ui_state.hand_selection_index - 1
+                                            };
+                                        }
+                                    }
+                                    GameView::PlayerCards => {
+                                        let num_players = game_host.get_players_public().len();
+                                        ui_state.player_list_index = if ui_state.player_list_index == 0 {
+                                            num_players - 1
+                                        } else {
+                                            ui_state.player_list_index - 1
+                                        };
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyCode::Down => {
+                                use super::game_ui::GameView;
+                                match ui_state.current_view {
+                                    GameView::Hand => {
+                                        let hand = game_host.get_hand();
+                                        let hand_vec: Vec<_> = hand.iter().filter(|(_, c)| **c > 0).collect();
+                                        if !hand_vec.is_empty() {
+                                            ui_state.hand_selection_index = (ui_state.hand_selection_index + 1) % hand_vec.len();
+                                        }
+                                    }
+                                    GameView::PlayerCards => {
+                                        let num_players = game_host.get_players_public().len();
+                                        ui_state.player_list_index = (ui_state.player_list_index + 1) % num_players;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyCode::Char(' ') => {
+                                if !submitted && ui_state.current_view == super::game_ui::GameView::Hand {
+                                    let hand = game_host.get_hand();
+                                    let hand_vec: Vec<_> = hand.iter()
+                                        .filter(|(_, c)| **c > 0)
+                                        .map(|(k, v)| (*k, *v))
+                                        .collect();
+
+                                    if ui_state.hand_selection_index < hand_vec.len() {
+                                        let (card_kind, available_count) = hand_vec[ui_state.hand_selection_index];
+                                        let player_id = game_host.get_player_id();
+                                        let player_selected = ui_state.player_selections
+                                            .entry(player_id)
+                                            .or_insert_with(|| (std::collections::HashMap::new(), std::collections::HashMap::new()));
+
+                                        if player_selected.0.contains_key(&card_kind) {
+                                            // Deselect
+                                            player_selected.0.remove(&card_kind);
+                                        } else {
+                                            // Select (max 1 card for now, TODO: handle Drink Tray)
+                                            player_selected.0.clear();
+                                            player_selected.0.insert(card_kind, 1.min(available_count));
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if !submitted && ui_state.current_view == super::game_ui::GameView::Hand {
+                                    let player_id = game_host.get_player_id();
+                                    if let Some((selected, _)) = ui_state.player_selections.get(&player_id) {
+                                        if !selected.is_empty() {
+                                            let hand = game_host.get_hand();
+                                            let mut remaining = hand.clone();
+                                            for (kind, count) in selected {
+                                                if let Some(remaining_count) = remaining.get_mut(kind) {
+                                                    *remaining_count = remaining_count.saturating_sub(*count);
+                                                }
+                                            }
+
+                                            if let Ok(_) = GameInterface::submit_turn(&mut game_host, selected.clone(), remaining) {
+                                                submitted = true;
+                                                crate::log::host("Host submitted turn".to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
     }
@@ -462,13 +590,21 @@ pub async fn run_join_game() -> Result<(), GameError> {
 
         crate::log::client(format!("Transitioned to game phase as player {}", player_id));
 
+        let mut ui_state = super::game_ui::GameUIState::new();
+        let mut submitted = false;
+
         loop {
+            // Poll for network events (non-blocking)
             tokio::select! {
                 Some(event) = game_client.next_event() => {
                     use crate::network::GameClientEvent;
                     match event {
                         GameClientEvent::GameUpdated { game_status } => {
                             crate::log::client(format!("Game updated: {:?}", game_status));
+                            // Reset for next turn
+                            submitted = false;
+                            ui_state.clear_selections();
+                            ui_state.reset_for_new_turn();
                         }
                         GameClientEvent::GameEnded { final_scores, reason } => {
                             crate::log::client(format!("Game ended: {:?}, scores: {:?}", reason, final_scores));
@@ -480,7 +616,126 @@ pub async fn run_join_game() -> Result<(), GameError> {
                         }
                     }
                 }
-                _ = sleep(Duration::from_millis(50)) => {}
+                _ = sleep(Duration::from_millis(16)) => {
+                    // Timeout to keep UI responsive
+                }
+            }
+
+            // Render game UI
+            let has_drink_tray = ui_state.drink_tray_activated.get(&game_client.get_player_id()).copied().unwrap_or(false);
+            let max_selections = if has_drink_tray { 2 } else { 1 };
+            terminal.draw(|f| {
+                crate::tui::render_game_ui(f, &game_client, &ui_state, submitted, max_selections);
+            }).map_err(|e| GameError::Other(e.to_string()))?;
+
+            // Handle input (non-blocking poll)
+            if event::poll(Duration::from_millis(10)).map_err(|e| GameError::Other(e.to_string()))? {
+                if let Event::Key(key) = event::read().map_err(|e| GameError::Other(e.to_string()))? {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') => break,
+                            KeyCode::Char('h') => {
+                                ui_state.current_view = super::game_ui::GameView::Hand;
+                            }
+                            KeyCode::Char('m') => {
+                                ui_state.current_view = super::game_ui::GameView::MyCards;
+                            }
+                            KeyCode::Char('p') => {
+                                ui_state.current_view = super::game_ui::GameView::PlayerCards;
+                            }
+                            KeyCode::Up => {
+                                use super::game_ui::GameView;
+                                match ui_state.current_view {
+                                    GameView::Hand => {
+                                        let hand = game_client.get_hand();
+                                        let hand_vec: Vec<_> = hand.iter().filter(|(_, c)| **c > 0).collect();
+                                        if !hand_vec.is_empty() {
+                                            ui_state.hand_selection_index = if ui_state.hand_selection_index == 0 {
+                                                hand_vec.len() - 1
+                                            } else {
+                                                ui_state.hand_selection_index - 1
+                                            };
+                                        }
+                                    }
+                                    GameView::PlayerCards => {
+                                        let num_players = game_client.get_players_public().len();
+                                        ui_state.player_list_index = if ui_state.player_list_index == 0 {
+                                            num_players - 1
+                                        } else {
+                                            ui_state.player_list_index - 1
+                                        };
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyCode::Down => {
+                                use super::game_ui::GameView;
+                                match ui_state.current_view {
+                                    GameView::Hand => {
+                                        let hand = game_client.get_hand();
+                                        let hand_vec: Vec<_> = hand.iter().filter(|(_, c)| **c > 0).collect();
+                                        if !hand_vec.is_empty() {
+                                            ui_state.hand_selection_index = (ui_state.hand_selection_index + 1) % hand_vec.len();
+                                        }
+                                    }
+                                    GameView::PlayerCards => {
+                                        let num_players = game_client.get_players_public().len();
+                                        ui_state.player_list_index = (ui_state.player_list_index + 1) % num_players;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyCode::Char(' ') => {
+                                if !submitted && ui_state.current_view == super::game_ui::GameView::Hand {
+                                    let hand = game_client.get_hand();
+                                    let hand_vec: Vec<_> = hand.iter()
+                                        .filter(|(_, c)| **c > 0)
+                                        .map(|(k, v)| (*k, *v))
+                                        .collect();
+
+                                    if ui_state.hand_selection_index < hand_vec.len() {
+                                        let (card_kind, available_count) = hand_vec[ui_state.hand_selection_index];
+                                        let player_id = game_client.get_player_id();
+                                        let player_selected = ui_state.player_selections
+                                            .entry(player_id)
+                                            .or_insert_with(|| (std::collections::HashMap::new(), std::collections::HashMap::new()));
+
+                                        if player_selected.0.contains_key(&card_kind) {
+                                            // Deselect
+                                            player_selected.0.remove(&card_kind);
+                                        } else {
+                                            // Select (max 1 card for now, TODO: handle Drink Tray)
+                                            player_selected.0.clear();
+                                            player_selected.0.insert(card_kind, 1.min(available_count));
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if !submitted && ui_state.current_view == super::game_ui::GameView::Hand {
+                                    let player_id = game_client.get_player_id();
+                                    if let Some((selected, _)) = ui_state.player_selections.get(&player_id) {
+                                        if !selected.is_empty() {
+                                            let hand = game_client.get_hand();
+                                            let mut remaining = hand.clone();
+                                            for (kind, count) in selected {
+                                                if let Some(remaining_count) = remaining.get_mut(kind) {
+                                                    *remaining_count = remaining_count.saturating_sub(*count);
+                                                }
+                                            }
+
+                                            if let Ok(_) = GameInterface::submit_turn(&mut game_client, selected.clone(), remaining) {
+                                                submitted = true;
+                                                crate::log::client("Client submitted turn".to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
     }

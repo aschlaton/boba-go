@@ -94,6 +94,27 @@ impl Host<GameHostState> {
         )
     }
 
+    pub fn get_own_hand(&self) -> HashMap<CardKind, usize> {
+        self.state.game.get_player_hand(0).cloned().unwrap_or_default()
+    }
+
+    pub fn get_game_status(&self) -> crate::engine::state::GameStatus {
+        self.state.game.get_game_status()
+    }
+
+    pub fn get_players_public(&self) -> Vec<crate::engine::models::PlayerPublic> {
+        self.state.game.get_players_public()
+    }
+
+    pub fn submit_own_turn(&mut self, selected_cards: HashMap<CardKind, usize>, remaining_hand: HashMap<CardKind, usize>) -> Result<(), String> {
+        self.state.game.validate_hand_submission(0, &selected_cards, &remaining_hand)
+            .map_err(|e| format!("{:?}", e))?;
+        self.state.game.mark_player_selected(0).map_err(|e| format!("{:?}", e))?;
+        self.state.turn_submissions.insert(0, (selected_cards, remaining_hand));
+        log::host("Host submitted turn".to_string());
+        Ok(())
+    }
+
     // process turn when all players have submitted
     pub fn process_turn(&mut self) -> Result<(), String> {
         // build submissions vec from stored submissions
@@ -245,4 +266,26 @@ pub enum GameHostEvent {
     PlayerSubmitted { player_id: usize },
     AllPlayersSubmitted,
     PlayerDisconnected { peer_id: PeerId, player_id: usize },
+}
+
+impl crate::tui::GameInterface for Host<GameHostState> {
+    fn get_hand(&self) -> HashMap<CardKind, usize> {
+        self.get_own_hand()
+    }
+
+    fn get_game_status(&self) -> crate::engine::state::GameStatus {
+        Host::<GameHostState>::get_game_status(self)
+    }
+
+    fn get_players_public(&self) -> Vec<crate::engine::models::PlayerPublic> {
+        Host::<GameHostState>::get_players_public(self)
+    }
+
+    fn submit_turn(&mut self, selected: HashMap<CardKind, usize>, remaining: HashMap<CardKind, usize>) -> Result<(), String> {
+        self.submit_own_turn(selected, remaining)
+    }
+
+    fn get_player_id(&self) -> usize {
+        0
+    }
 }
