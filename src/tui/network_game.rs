@@ -1,4 +1,5 @@
 use std::io;
+use std::time::Duration;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
@@ -8,27 +9,29 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
+use tokio::time::sleep;
 
 use crate::engine::GameError;
-use super::views::{render_host_lobby, render_client_lobby, ClientLobbyState};
+use crate::network::{Host, Client, lobby::{LobbyHostState, LobbyClientState}};
 
 /// Host a network game
-pub fn run_host_game() -> Result<(), GameError> {
-    let _ = enable_raw_mode();
+pub async fn run_host_game() -> Result<(), GameError> {
+    enable_raw_mode().map_err(|e| GameError::Other(e.to_string()))?;
     let mut stdout = io::stdout();
-    let _ = execute!(stdout, EnterAlternateScreen);
+    execute!(stdout, EnterAlternateScreen).map_err(|e| GameError::Other(e.to_string()))?;
     let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend).expect("create terminal");
+    let mut terminal = Terminal::new(backend).map_err(|e| GameError::Other(e.to_string()))?;
 
     let mut room_name = String::new();
     let mut host_name = String::new();
     let mut input_phase = 0;
 
+    // Input phase
     loop {
-        let _ = terminal.draw(|f| {
+        terminal.draw(|f| {
             let area = f.area();
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -61,14 +64,14 @@ pub fn run_host_game() -> Result<(), GameError> {
                 .block(Block::default().borders(Borders::ALL));
             f.render_widget(input, chunks[1]);
 
-            let footer = Paragraph::new("Press Enter to continue, Backspace to delete, Q to cancel")
+            let footer = Paragraph::new("Press Enter to continue, Backspace to delete, Esc to cancel")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Gray));
             f.render_widget(footer, chunks[2]);
-        });
+        }).map_err(|e| GameError::Other(e.to_string()))?;
 
-        if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
-            if let Ok(Event::Key(key)) = event::read() {
+        if event::poll(Duration::from_millis(100)).map_err(|e| GameError::Other(e.to_string()))? {
+            if let Event::Key(key) = event::read().map_err(|e| GameError::Other(e.to_string()))? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char(c) => {
@@ -92,8 +95,8 @@ pub fn run_host_game() -> Result<(), GameError> {
                             }
                         }
                         KeyCode::Esc => {
-                            let _ = disable_raw_mode();
-                            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+                            disable_raw_mode().ok();
+                            execute!(io::stdout(), LeaveAlternateScreen).ok();
                             return Ok(());
                         }
                         _ => {}
@@ -103,171 +106,285 @@ pub fn run_host_game() -> Result<(), GameError> {
         }
     }
 
-    let game_id = "TODO TODO TODO";
-    let connected_players: Vec<(u64, String)> = Vec::new();
-    let expected_players = 2;
+    // Create host lobby
+    let mut lobby: Host<LobbyHostState> = Host::new(room_name.clone(), host_name.clone()).await
+        .map_err(|e| GameError::Other(e.to_string()))?;
+    lobby.listen("/ip4/0.0.0.0/tcp/0")
+        .map_err(|e| GameError::Other(e.to_string()))?;
 
+    let mut listening_addr = None;
+
+    // Lobby loop
     loop {
-        let _ = terminal.draw(|f| {
-            render_host_lobby(
-                f,
-                game_id,
-                &host_name,
-                &connected_players,
-                expected_players,
-            );
-        });
-
-        if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
-            if let Ok(Event::Key(key)) = event::read() {
-                if key.kind == KeyEventKind::Press {
-                    if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                        break;
+        // Poll for network events (non-blocking)
+        tokio::select! {
+            Some(event) = lobby.next_event() => {
+                use crate::network::HostEvent;
+                match event {
+                    HostEvent::Listening { address } => {
+                        listening_addr = Some(address.to_string());
                     }
+                    HostEvent::PlayerJoined { .. } => {
+                        // Players list updated automatically
+                    }
+                    HostEvent::PlayerLeft { .. } => {
+                        // Players list updated automatically
+                    }
+                }
+            }
+            _ = sleep(Duration::from_millis(50)) => {
+                // Just continue to render
+            }
+        }
+
+        // Render
+        terminal.draw(|f| {
+            let area = f.area();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                    Constraint::Length(3),
+                ])
+                .split(area);
+
+            // Title
+            let title = Paragraph::new(format!("Hosting: {}", room_name))
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL));
+            f.render_widget(title, chunks[0]);
+
+            // Address
+            let addr_text = if let Some(addr) = &listening_addr {
+                format!("Address: {}", addr)
+            } else {
+                "Starting server...".to_string()
+            };
+            let addr = Paragraph::new(addr_text)
+                .style(Style::default().fg(Color::Green))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL).title("Connection Info"));
+            f.render_widget(addr, chunks[1]);
+
+            // Players
+            let players = lobby.get_lobby_players();
+            let player_items: Vec<ListItem> = players
+                .iter()
+                .map(|p| ListItem::new(format!("• {}", p.name)))
+                .collect();
+            let player_list = List::new(player_items)
+                .block(Block::default().borders(Borders::ALL).title("Players in Lobby"));
+            f.render_widget(player_list, chunks[2]);
+
+            // Footer
+            let footer = Paragraph::new("Press Esc to quit")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Gray));
+            f.render_widget(footer, chunks[3]);
+        }).map_err(|e| GameError::Other(e.to_string()))?;
+
+        // Handle input
+        if event::poll(Duration::from_millis(10)).map_err(|e| GameError::Other(e.to_string()))? {
+            if let Event::Key(key) = event::read().map_err(|e| GameError::Other(e.to_string()))? {
+                if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
+                    break;
                 }
             }
         }
     }
 
-    let _ = disable_raw_mode();
-    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    disable_raw_mode().ok();
+    execute!(io::stdout(), LeaveAlternateScreen).ok();
     Ok(())
 }
 
 /// Join a network game
-#[allow(unused_assignments)]
-pub fn run_join_game() -> Result<(), GameError> {
-    let _ = enable_raw_mode();
+pub async fn run_join_game() -> Result<(), GameError> {
+    enable_raw_mode().map_err(|e| GameError::Other(e.to_string()))?;
     let mut stdout = io::stdout();
-    let _ = execute!(stdout, EnterAlternateScreen);
+    execute!(stdout, EnterAlternateScreen).map_err(|e| GameError::Other(e.to_string()))?;
     let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend).expect("create terminal");
+    let mut terminal = Terminal::new(backend).map_err(|e| GameError::Other(e.to_string()))?;
 
-    let mut lobby_state = ClientLobbyState::EnteringName {
-        current_input: String::new(),
-    };
-
-    #[allow(unused_variables)]
     let mut player_name = String::new();
+    let mut host_address = String::new();
+    let mut input_phase = 0;
 
+    // Input phase
     loop {
-        let _ = terminal.draw(|f| {
-            render_client_lobby(f, &lobby_state);
-        });
+        terminal.draw(|f| {
+            let area = f.area();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                ])
+                .split(area);
 
-        if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
-            if let Ok(Event::Key(key)) = event::read() {
+            let prompt = if input_phase == 0 {
+                "Enter your name:"
+            } else {
+                "Enter host address (e.g., /ip4/127.0.0.1/tcp/12345):"
+            };
+            let prompt_para = Paragraph::new(prompt)
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL));
+            f.render_widget(prompt_para, chunks[0]);
+
+            let current_input = if input_phase == 0 { &player_name } else { &host_address };
+            let input_display = if current_input.is_empty() {
+                "_".to_string()
+            } else {
+                format!("{}_", current_input)
+            };
+            let input = Paragraph::new(input_display)
+                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL));
+            f.render_widget(input, chunks[1]);
+
+            let footer = Paragraph::new("Press Enter to continue, Backspace to delete, Esc to cancel")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Gray));
+            f.render_widget(footer, chunks[2]);
+        }).map_err(|e| GameError::Other(e.to_string()))?;
+
+        if event::poll(Duration::from_millis(100)).map_err(|e| GameError::Other(e.to_string()))? {
+            if let Event::Key(key) = event::read().map_err(|e| GameError::Other(e.to_string()))? {
                 if key.kind == KeyEventKind::Press {
-                    match &mut lobby_state {
-                        ClientLobbyState::EnteringName { current_input } => {
-                            match key.code {
-                                KeyCode::Char('m') | KeyCode::Char('M') => {
-                                    if !current_input.is_empty() {
-                                        player_name = current_input.clone();
-                                        lobby_state = ClientLobbyState::DiscoveringPeers {
-                                            discovered: Vec::new(),
-                                            selection_index: 0,
-                                        };
-                                    }
-                                }
-                                KeyCode::Char(c) => {
-                                    if current_input.len() < 20 {
-                                        current_input.push(c);
-                                    }
-                                }
-                                KeyCode::Backspace => {
-                                    current_input.pop();
-                                }
-                                KeyCode::Enter => {
-                                    if !current_input.is_empty() {
-                                        player_name = current_input.clone();
-                                        lobby_state = ClientLobbyState::EnteringHostAddress {
-                                            current_input: String::new(),
-                                        };
-                                    }
-                                }
-                                KeyCode::Esc => {
-                                    let _ = disable_raw_mode();
-                                    let _ = execute!(io::stdout(), LeaveAlternateScreen);
-                                    return Ok(());
-                                }
-                                _ => {}
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            let current = if input_phase == 0 { &mut player_name } else { &mut host_address };
+                            if current.len() < 50 {
+                                current.push(c);
                             }
                         }
-                        ClientLobbyState::EnteringHostAddress { current_input } => {
-                            match key.code {
-                                KeyCode::Char('m') | KeyCode::Char('M') => {
-                                    lobby_state = ClientLobbyState::DiscoveringPeers {
-                                        discovered: Vec::new(),
-                                        selection_index: 0,
-                                    };
+                        KeyCode::Backspace => {
+                            let current = if input_phase == 0 { &mut player_name } else { &mut host_address };
+                            current.pop();
+                        }
+                        KeyCode::Enter => {
+                            let current = if input_phase == 0 { &player_name } else { &host_address };
+                            if !current.is_empty() {
+                                if input_phase == 0 {
+                                    input_phase = 1;
+                                } else {
+                                    break;
                                 }
-                                KeyCode::Char(c) => {
-                                    current_input.push(c);
-                                }
-                                KeyCode::Backspace => {
-                                    current_input.pop();
-                                }
-                                KeyCode::Enter => {
-                                    if !current_input.is_empty() {
-                                        lobby_state = ClientLobbyState::Connecting;
-                                    }
-                                }
-                                KeyCode::Esc => {
-                                    let _ = disable_raw_mode();
-                                    let _ = execute!(io::stdout(), LeaveAlternateScreen);
-                                    return Ok(());
-                                }
-                                _ => {}
                             }
                         }
-                        ClientLobbyState::DiscoveringPeers { discovered, selection_index } => {
-                            match key.code {
-                                KeyCode::Char('q') | KeyCode::Esc => {
-                                    let _ = disable_raw_mode();
-                                    let _ = execute!(io::stdout(), LeaveAlternateScreen);
-                                    return Ok(());
-                                }
-                                KeyCode::Up => {
-                                    if !discovered.is_empty() {
-                                        *selection_index = selection_index.checked_sub(1).unwrap_or(discovered.len() - 1);
-                                    }
-                                }
-                                KeyCode::Down => {
-                                    if !discovered.is_empty() {
-                                        *selection_index = (*selection_index + 1) % discovered.len();
-                                    }
-                                }
-                                KeyCode::Enter => {
-                                    if !discovered.is_empty() && *selection_index < discovered.len() {
-                                        lobby_state = ClientLobbyState::Connecting;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        ClientLobbyState::Connecting => {
-                            if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                                let _ = disable_raw_mode();
-                                let _ = execute!(io::stdout(), LeaveAlternateScreen);
-                                return Ok(());
-                            }
-                        }
-                        ClientLobbyState::WaitingForStart { .. } => {
-                            if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                                let _ = disable_raw_mode();
-                                let _ = execute!(io::stdout(), LeaveAlternateScreen);
-                                return Ok(());
-                            }
-                        }
-                        ClientLobbyState::Rejected { .. } => {
-                            let _ = disable_raw_mode();
-                            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+                        KeyCode::Esc => {
+                            disable_raw_mode().ok();
+                            execute!(io::stdout(), LeaveAlternateScreen).ok();
                             return Ok(());
                         }
+                        _ => {}
                     }
                 }
             }
         }
     }
+
+    // Create client lobby and connect
+    let mut lobby: Client<LobbyClientState> = Client::new("default".to_string(), player_name.clone()).await
+        .map_err(|e| GameError::Other(e.to_string()))?;
+    lobby.connect(&host_address)
+        .map_err(|e| GameError::Other(e.to_string()))?;
+
+    let mut status = "Connecting...".to_string();
+    let mut connected = false;
+
+    // Lobby loop
+    loop {
+        // Poll for network events (non-blocking)
+        tokio::select! {
+            Some(event) = lobby.next_event() => {
+                use crate::network::ClientEvent;
+                match event {
+                    ClientEvent::JoinedLobby { player_id, .. } => {
+                        status = format!("Connected! Your ID: {}", player_id);
+                        connected = true;
+                    }
+                    ClientEvent::JoinRejected { reason } => {
+                        status = format!("Rejected: {}", reason);
+                    }
+                    ClientEvent::LobbyUpdated { .. } => {
+                        // Players list updated automatically
+                    }
+                    ClientEvent::Disconnected => {
+                        status = "Disconnected from host".to_string();
+                        connected = false;
+                    }
+                    ClientEvent::Error { message } => {
+                        status = format!("Error: {}", message);
+                    }
+                }
+            }
+            _ = sleep(Duration::from_millis(50)) => {
+                // Just continue to render
+            }
+        }
+
+        // Render
+        terminal.draw(|f| {
+            let area = f.area();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                    Constraint::Length(3),
+                ])
+                .split(area);
+
+            // Title
+            let title = Paragraph::new("Joining Game")
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL));
+            f.render_widget(title, chunks[0]);
+
+            // Status
+            let status_para = Paragraph::new(status.clone())
+                .style(Style::default().fg(if connected { Color::Green } else { Color::Yellow }))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL).title("Status"));
+            f.render_widget(status_para, chunks[1]);
+
+            // Players
+            let players = lobby.get_lobby_players();
+            let player_items: Vec<ListItem> = players
+                .iter()
+                .map(|p| ListItem::new(format!("• {}", p.name)))
+                .collect();
+            let player_list = List::new(player_items)
+                .block(Block::default().borders(Borders::ALL).title("Players in Lobby"));
+            f.render_widget(player_list, chunks[2]);
+
+            // Footer
+            let footer = Paragraph::new("Press Esc to quit")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Gray));
+            f.render_widget(footer, chunks[3]);
+        }).map_err(|e| GameError::Other(e.to_string()))?;
+
+        // Handle input
+        if event::poll(Duration::from_millis(10)).map_err(|e| GameError::Other(e.to_string()))? {
+            if let Event::Key(key) = event::read().map_err(|e| GameError::Other(e.to_string()))? {
+                if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
+                    break;
+                }
+            }
+        }
+    }
+
+    disable_raw_mode().ok();
+    execute!(io::stdout(), LeaveAlternateScreen).ok();
+    Ok(())
 }

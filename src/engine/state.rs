@@ -13,6 +13,8 @@ pub enum GameError {
     InvalidConfig,
     #[error("Not enough cards in deck for new round")]
     NotEnoughCards,
+    #[error("{0}")]
+    Other(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
