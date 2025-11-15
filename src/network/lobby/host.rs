@@ -49,12 +49,11 @@ impl Host<LobbyHostState> {
         })
     }
 
-    /// Get current lobby state
     pub fn get_lobby_players(&self) -> Vec<LobbyPlayer> {
         self.state.get_all_players()
     }
 
-    /// Process a join request and return the response
+    // process join request, return response and event
     fn process_join_request(&mut self, peer: PeerId, player_name: String) -> (HostMessage, Option<HostEvent>) {
         log::host(format!("Join request from peer {peer} with name '{player_name}'"));
 
@@ -71,12 +70,9 @@ impl Host<LobbyHostState> {
 
         log::host("Name taken: false");
 
-        // Add player (IDs start from 1, host is 0)
+        // add player and broadcast update
         let player_id = self.state.add_player(peer, player_name.clone());
-
         let lobby_players = self.get_lobby_players();
-
-        // Broadcast update to others
         self.broadcast_lobby_update();
 
         let response = HostMessage::JoinResponse {
@@ -116,24 +112,20 @@ impl Host<LobbyHostState> {
         match rr_event {
             request_response::Event::Message { peer, message, .. } => {
                 if let request_response::Message::Request {
-                    request,
+                    request: ClientMessage::JoinRequest { player_name },
                     channel,
                     ..
                 } = message
                 {
-                    match request {
-                        ClientMessage::JoinRequest { player_name } => {
-                            let (response, event) = self.process_join_request(peer, player_name);
+                    let (response, event) = self.process_join_request(peer, player_name);
 
-                            self.swarm
-                                .behaviour_mut()
-                                .request_response
-                                .send_response(channel, response)
-                                .ok();
+                    self.swarm
+                        .behaviour_mut()
+                        .request_response
+                        .send_response(channel, response)
+                        .ok();
 
-                            return event;
-                        }
-                    }
+                    return event;
                 }
             }
             _ => {}
