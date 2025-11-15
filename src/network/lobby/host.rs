@@ -37,7 +37,7 @@ impl Host<LobbyHostState> {
             libp2p::swarm::Config::with_tokio_executor(),
         );
 
-        let topic = IdentTopic::new(format!("boba-go-lobby-{}", room_name));
+        let topic = IdentTopic::new("boba-go-lobby");
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
         let state = LobbyHostState::new(room_name, host_player_name);
@@ -158,6 +158,12 @@ impl Host<LobbyHostState> {
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                     log::host(format!("Connection established with {peer_id}"));
+                    self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                }
+                SwarmEvent::Behaviour(BobaGoBehaviourEvent::Gossipsub(
+                    libp2p::gossipsub::Event::Subscribed { peer_id, topic }
+                )) => {
+                    log::host(format!("Peer {peer_id} subscribed to topic {:?}", topic));
                 }
                 SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
                     if let Some(event) = self.handle_connection_closed(peer_id, &cause) {

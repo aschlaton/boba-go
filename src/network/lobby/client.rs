@@ -24,7 +24,7 @@ pub struct LobbyClientState {
 
 // Lobby-specific impl
 impl Client<LobbyClientState> {
-    pub async fn new(room_name: String, player_name: String) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(player_name: String) -> Result<Self, Box<dyn Error>> {
         let local_key = identity::Keypair::generate_ed25519();
         let local_peer_id = PeerId::from(local_key.public());
 
@@ -46,7 +46,7 @@ impl Client<LobbyClientState> {
             libp2p::swarm::Config::with_tokio_executor(),
         );
 
-        let topic = IdentTopic::new(format!("boba-go-lobby-{}", room_name));
+        let topic = IdentTopic::new("boba-go-lobby");
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
         let state = LobbyClientState {
@@ -78,6 +78,13 @@ impl Client<LobbyClientState> {
 
     pub fn get_lobby_players(&self) -> Vec<LobbyPlayer> {
         self.state.lobby_players.clone()
+    }
+
+    pub fn subscribe_to_game_topic(&mut self) -> Result<(), Box<dyn Error>> {
+        let game_topic = IdentTopic::new("boba-go-game");
+        self.swarm.behaviour_mut().gossipsub.subscribe(&game_topic)?;
+        log::client("Subscribed to game topic".to_string());
+        Ok(())
     }
 
     pub fn get_player_id(&self) -> Option<usize> {
@@ -118,7 +125,7 @@ impl Client<LobbyClientState> {
                                                 });
                                             }
                                         }
-                                        HostMessage::LobbyUpdate { .. } => {}
+                                        _ => {}
                                     }
                                 }
                             }
@@ -133,20 +140,42 @@ impl Client<LobbyClientState> {
                 }
                 SwarmEvent::Behaviour(BobaGoBehaviourEvent::Gossipsub(gossipsub_event)) => {
                     if let libp2p::gossipsub::Event::Message { message, .. } = gossipsub_event {
+                        log::client(format!("Received message on topic: {:?}", message.topic));
                         if let Ok(json_str) = std::str::from_utf8(&message.data) {
+                            log::client(format!("Received gossipsub message: {}", json_str));
                             if let Ok(host_message) =
                                 serde_json::from_str::<HostMessage>(json_str)
                             {
-                                if let HostMessage::LobbyUpdate { players } = host_message {
-                                    self.state.lobby_players = players.clone();
-                                    return Some(ClientEvent::LobbyUpdated { players });
+                                match host_message {
+                                    HostMessage::LobbyUpdate { players } => {
+                                        self.state.lobby_players = players.clone();
+                                        return Some(ClientEvent::LobbyUpdated { players });
+                                    }
+                                    _ => {}
                                 }
+                            } else if let Ok(game_message) =
+                                serde_json::from_str::<super::super::game::GameHostMessage>(json_str)
+                            {
+                                use super::super::game::GameHostMessage;
+                                log::client("Parsed as GameHostMessage".to_string());
+                                if let GameHostMessage::GameUpdate { all_hands, players_public, game_status } = game_message {
+                                    log::client("Detected GameUpdate, transitioning to game".to_string());
+                                    return Some(ClientEvent::GameStarting {
+                                        all_hands,
+                                        players_public,
+                                        game_status,
+                                    });
+                                }
+                            } else {
+                                log::client("Failed to parse message".to_string());
                             }
                         }
                     }
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                     log::client(format!("Connected to host: {peer_id}"));
+                    self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                    log::client(format!("Client topics: {:?}", self.swarm.behaviour().gossipsub.topics().collect::<Vec<_>>()));
                     self.state.host_peer_id = Some(peer_id);
                     if !self.state.join_request_sent {
                         self.state.join_request_sent = true;
@@ -176,6 +205,11 @@ pub enum ClientEvent {
     },
     LobbyUpdated {
         players: Vec<LobbyPlayer>,
+    },
+    GameStarting {
+        all_hands: Vec<std::collections::HashMap<crate::engine::models::CardKind, usize>>,
+        players_public: Vec<crate::engine::models::PlayerPublic>,
+        game_status: crate::engine::state::GameStatus,
     },
     Disconnected,
     Error {

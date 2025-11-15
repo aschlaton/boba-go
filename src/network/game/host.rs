@@ -121,7 +121,7 @@ impl Host<GameHostState> {
     }
 
     // broadcast game update to all players
-    fn broadcast_game_update(&mut self) {
+    pub fn broadcast_game_update(&mut self) {
         let players_public = self.state.game.get_players_public();
         let game_status = self.state.game.get_game_status();
 
@@ -140,11 +140,15 @@ impl Host<GameHostState> {
         };
 
         if let Ok(json) = serde_json::to_string(&message) {
-            self.swarm
+            log::host(format!("Publishing GameUpdate on topic: {:?}", self.topic));
+            log::host(format!("GameUpdate message: {}", json));
+            match self.swarm
                 .behaviour_mut()
                 .gossipsub
-                .publish(self.topic.clone(), json.as_bytes())
-                .ok();
+                .publish(self.topic.clone(), json.as_bytes()) {
+                    Ok(msg_id) => log::host(format!("Published GameUpdate with id: {:?}", msg_id)),
+                    Err(e) => log::host(format!("Failed to publish GameUpdate: {:?}", e)),
+                }
         }
     }
 

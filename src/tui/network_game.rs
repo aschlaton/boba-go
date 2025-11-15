@@ -228,6 +228,9 @@ pub async fn run_host_game() -> Result<(), GameError> {
         let game = crate::engine::Game::new(config)?;
         let mut game_host = crate::network::lobby_to_game_host(lobby, game);
 
+        crate::log::host("Broadcasting initial game update".to_string());
+        game_host.broadcast_game_update();
+
         crate::log::host("Transitioned to game phase".to_string());
 
         crate::log::host("Game started! Waiting for player submissions...".to_string());
@@ -352,15 +355,15 @@ pub async fn run_join_game() -> Result<(), GameError> {
     }
 
     // Create client lobby and connect
-    let mut lobby = Client::<LobbyClientState>::new("default".to_string(), player_name.clone()).await
+    let mut lobby = Client::<LobbyClientState>::new(player_name.clone()).await
         .map_err(|e| GameError::Other(e.to_string()))?;
     lobby.connect(&host_address)
         .map_err(|e| GameError::Other(e.to_string()))?;
 
     let mut status = "Connecting...".to_string();
     let mut connected = false;
+    let mut game_starting_data: Option<(Vec<std::collections::HashMap<crate::engine::models::CardKind, usize>>, Vec<crate::engine::models::PlayerPublic>, crate::engine::state::GameStatus)> = None;
 
-    // Lobby loop
     loop {
         // Poll for network events (non-blocking)
         tokio::select! {
@@ -374,8 +377,10 @@ pub async fn run_join_game() -> Result<(), GameError> {
                     ClientEvent::JoinRejected { reason } => {
                         status = format!("Rejected: {}", reason);
                     }
-                    ClientEvent::LobbyUpdated { .. } => {
-                        // Players list updated automatically
+                    ClientEvent::LobbyUpdated { .. } => {}
+                    ClientEvent::GameStarting { all_hands, players_public, game_status } => {
+                        game_starting_data = Some((all_hands, players_public, game_status));
+                        break;
                     }
                     ClientEvent::Disconnected => {
                         status = "Disconnected from host".to_string();
@@ -386,9 +391,7 @@ pub async fn run_join_game() -> Result<(), GameError> {
                     }
                 }
             }
-            _ = sleep(Duration::from_millis(50)) => {
-                // Just continue to render
-            }
+            _ = sleep(Duration::from_millis(50)) => {}
         }
 
         // Render
@@ -441,6 +444,43 @@ pub async fn run_join_game() -> Result<(), GameError> {
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
                     break;
                 }
+            }
+        }
+    }
+
+    if let Some((all_hands, players_public, game_status)) = game_starting_data {
+        let player_id = lobby.get_player_id().unwrap();
+        let initial_hand = all_hands.get(player_id).cloned().unwrap_or_default();
+
+        let mut game_client = crate::network::lobby_to_game_client(
+            lobby,
+            player_id,
+            initial_hand,
+            players_public,
+            game_status,
+        );
+
+        crate::log::client(format!("Transitioned to game phase as player {}", player_id));
+
+        loop {
+            tokio::select! {
+                Some(event) = game_client.next_event() => {
+                    use crate::network::GameClientEvent;
+                    match event {
+                        GameClientEvent::GameUpdated { game_status } => {
+                            crate::log::client(format!("Game updated: {:?}", game_status));
+                        }
+                        GameClientEvent::GameEnded { final_scores, reason } => {
+                            crate::log::client(format!("Game ended: {:?}, scores: {:?}", reason, final_scores));
+                            break;
+                        }
+                        GameClientEvent::Disconnected => {
+                            crate::log::client("Disconnected from host".to_string());
+                            break;
+                        }
+                    }
+                }
+                _ = sleep(Duration::from_millis(50)) => {}
             }
         }
     }
