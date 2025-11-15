@@ -46,7 +46,7 @@ impl LobbyHostState {
         self.players.remove(peer)
     }
 
-    /// Get all players in the lobby (including host as player 0)
+    /// Get all players in the lobby
     pub fn get_all_players(&self) -> Vec<LobbyPlayer> {
         let mut players: Vec<LobbyPlayer> = self.players.values().cloned().collect();
         // Add host as player 0
@@ -63,5 +63,18 @@ impl LobbyHostState {
     /// Get the number of players (excluding host)
     pub fn player_count(&self) -> usize {
         self.players.len()
+    }
+
+    /// Get peer to player mapping for transition to game
+    pub fn get_peer_mappings(&self) -> (HashMap<PeerId, usize>, HashMap<usize, PeerId>) {
+        let mut peer_to_player_id = HashMap::new();
+        let mut player_id_to_peer = HashMap::new();
+
+        for (peer, lobby_player) in &self.players {
+            peer_to_player_id.insert(*peer, lobby_player.id);
+            player_id_to_peer.insert(lobby_player.id, *peer);
+        }
+
+        (peer_to_player_id, player_id_to_peer)
     }
 }

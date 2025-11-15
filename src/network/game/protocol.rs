@@ -21,7 +21,7 @@ pub enum GameClientMessage {
 pub enum GameHostMessage {
     // game state update (sent after each turn processes)
     GameUpdate {
-        your_hand: HashMap<CardKind, usize>,
+        all_hands: Vec<HashMap<CardKind, usize>>, // indexed by player_id
         players_public: Vec<PlayerPublic>,
         game_status: GameStatus,
     },

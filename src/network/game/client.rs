@@ -164,8 +164,11 @@ impl Client<GameClientState> {
                         if let Ok(json_str) = std::str::from_utf8(&message.data) {
                             if let Ok(host_message) = serde_json::from_str::<GameHostMessage>(json_str) {
                                 match host_message {
-                                    GameHostMessage::GameUpdate { your_hand, players_public, game_status } => {
-                                        self.state.update_hand(your_hand);
+                                    GameHostMessage::GameUpdate { all_hands, players_public, game_status } => {
+                                        // extract own hand from all_hands
+                                        if let Some(your_hand) = all_hands.get(self.state.player_id) {
+                                            self.state.update_hand(your_hand.clone());
+                                        }
                                         self.state.update_players_public(players_public);
                                         self.state.update_game_status(game_status.clone());
                                         return Some(GameClientEvent::GameUpdated { game_status });

@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use libp2p::PeerId;
 
 use crate::engine::Game;
+use crate::engine::models::CardKind;
 
 pub struct GameHostState {
     pub game: Game,
     pub peer_to_player_id: HashMap<PeerId, usize>,
     pub player_id_to_peer: HashMap<usize, PeerId>,
+    pub turn_submissions: HashMap<usize, (HashMap<CardKind, usize>, HashMap<CardKind, usize>)>,
 }
 
 impl GameHostState {
@@ -19,6 +21,7 @@ impl GameHostState {
             game,
             peer_to_player_id,
             player_id_to_peer,
+            turn_submissions: HashMap::new(),
         }
     }
 

@@ -2,7 +2,7 @@ use libp2p::{
     futures::StreamExt,
     gossipsub::IdentTopic,
     swarm::{Swarm, SwarmEvent},
-    Multiaddr, PeerId,
+    PeerId,
 };
 use std::collections::HashMap;
 
@@ -73,6 +73,9 @@ impl Host<GameHostState> {
             );
         }
 
+        // store submission
+        self.state.turn_submissions.insert(player_id, (selected_cards, remaining_hand));
+
         // check if all players have submitted
         if self.state.game.all_players_selected() {
             return (
@@ -91,27 +94,57 @@ impl Host<GameHostState> {
         )
     }
 
+    // process turn when all players have submitted
+    pub fn process_turn(&mut self) -> Result<(), String> {
+        // build submissions vec from stored submissions
+        let mut submissions = Vec::new();
+        for player_id in 0..self.state.game.num_players() {
+            if let Some((selected, remaining)) = self.state.turn_submissions.get(&player_id) {
+                submissions.push(Some((selected.clone(), remaining.clone())));
+            } else {
+                return Err(format!("Missing submission for player {}", player_id));
+            }
+        }
+
+        // process turn in game engine
+        self.state.game.process_turn(submissions)
+            .map_err(|e| format!("Process turn failed: {:?}", e))?;
+
+        // clear submissions for next turn
+        self.state.turn_submissions.clear();
+
+        // broadcast updated game state
+        self.broadcast_game_update();
+
+        log::host("Turn processed successfully".to_string());
+        Ok(())
+    }
+
     // broadcast game update to all players
     fn broadcast_game_update(&mut self) {
         let players_public = self.state.game.get_players_public();
         let game_status = self.state.game.get_game_status();
 
-        for (peer_id, player_id) in &self.state.peer_to_player_id {
-            if let Ok(hand) = self.state.game.get_player_hand(*player_id) {
-                let message = GameHostMessage::GameUpdate {
-                    your_hand: hand.clone(),
-                    players_public: players_public.clone(),
-                    game_status: game_status.clone(),
-                };
-
-                if let Ok(json) = serde_json::to_string(&message) {
-                    self.swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .publish(self.topic.clone(), json.as_bytes())
-                        .ok();
-                }
+        // collect all hands
+        let mut all_hands = Vec::new();
+        for player_id in 0..self.state.game.num_players() {
+            if let Ok(hand) = self.state.game.get_player_hand(player_id) {
+                all_hands.push(hand.clone());
             }
+        }
+
+        let message = GameHostMessage::GameUpdate {
+            all_hands,
+            players_public,
+            game_status,
+        };
+
+        if let Ok(json) = serde_json::to_string(&message) {
+            self.swarm
+                .behaviour_mut()
+                .gossipsub
+                .publish(self.topic.clone(), json.as_bytes())
+                .ok();
         }
     }
 
