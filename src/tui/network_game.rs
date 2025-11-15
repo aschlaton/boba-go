@@ -114,6 +114,8 @@ pub async fn run_host_game() -> Result<(), GameError> {
 
     let mut listening_addr = None;
 
+    let mut should_start_game = false;
+
     // Lobby loop
     loop {
         // Poll for network events (non-blocking)
@@ -180,7 +182,12 @@ pub async fn run_host_game() -> Result<(), GameError> {
             f.render_widget(player_list, chunks[2]);
 
             // Footer
-            let footer = Paragraph::new("Press Esc to quit")
+            let footer_text = if lobby.get_lobby_players().len() >= 2 {
+                "Press S to start game, Esc to quit"
+            } else {
+                "Press Esc to quit (need at least 2 players to start)"
+            };
+            let footer = Paragraph::new(footer_text)
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Gray));
             f.render_widget(footer, chunks[3]);
@@ -189,9 +196,63 @@ pub async fn run_host_game() -> Result<(), GameError> {
         // Handle input
         if event::poll(Duration::from_millis(10)).map_err(|e| GameError::Other(e.to_string()))? {
             if let Event::Key(key) = event::read().map_err(|e| GameError::Other(e.to_string()))? {
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
-                    break;
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Esc => break,
+                        KeyCode::Char('s') | KeyCode::Char('S') => {
+                            if lobby.get_lobby_players().len() >= 2 {
+                                should_start_game = true;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
+            }
+        }
+    }
+
+    if should_start_game {
+        let players = lobby.get_lobby_players();
+        let player_names: Vec<String> = players.iter().map(|p| p.name.clone()).collect();
+
+        let config = crate::engine::GameConfig {
+            player_names,
+            seed: None,
+            card_distribution: None,
+            round_count: 3,
+        };
+
+        crate::log::host(format!("Starting game with config: {:?}", config));
+
+        let game = crate::engine::Game::new(config)?;
+        let mut game_host = crate::network::lobby_to_game_host(lobby, game);
+
+        crate::log::host("Transitioned to game phase".to_string());
+
+        crate::log::host("Game started! Waiting for player submissions...".to_string());
+
+        loop {
+            tokio::select! {
+                Some(event) = game_host.next_event() => {
+                    use crate::network::GameHostEvent;
+                    match event {
+                        GameHostEvent::PlayerSubmitted { player_id } => {
+                            crate::log::host(format!("Player {} submitted", player_id));
+                        }
+                        GameHostEvent::AllPlayersSubmitted => {
+                            crate::log::host("All players submitted, processing turn".to_string());
+                            if let Err(e) = game_host.process_turn() {
+                                crate::log::host(format!("Error processing turn: {}", e));
+                            }
+                        }
+                        GameHostEvent::PlayerDisconnected { player_id, .. } => {
+                            crate::log::host(format!("Player {} disconnected, ending game", player_id));
+                            break;
+                        }
+                    }
+                }
+                _ = sleep(Duration::from_millis(50)) => {}
             }
         }
     }
