@@ -372,9 +372,21 @@ pub async fn run_host_game() -> Result<(), GameError> {
                                                 }
                                             }
 
-                                            if let Ok(_) = GameInterface::submit_turn(&mut game_host, selected.clone(), remaining) {
+                                            if let Ok(all_submitted) = game_host.submit_own_turn(selected.clone(), remaining) {
                                                 submitted = true;
                                                 crate::log::host("Host submitted turn".to_string());
+
+                                                // If all players have submitted, process turn immediately
+                                                if all_submitted {
+                                                    crate::log::host("All players submitted after host, processing turn".to_string());
+                                                    if let Err(e) = game_host.process_turn() {
+                                                        crate::log::host(format!("Error processing turn: {}", e));
+                                                    }
+                                                    // Reset for next turn
+                                                    submitted = false;
+                                                    ui_state.clear_selections();
+                                                    ui_state.reset_for_new_turn();
+                                                }
                                             }
                                         }
                                     }

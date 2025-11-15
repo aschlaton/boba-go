@@ -30,6 +30,7 @@ pub fn lobby_to_game_client(
     players_public: Vec<crate::engine::models::PlayerPublic>,
     game_status: crate::engine::state::GameStatus,
 ) -> Client<GameClientState> {
+    let host_peer_id = lobby_client.get_host_peer_id();
     Client::<GameClientState>::new(
         lobby_client.swarm,
         lobby_client.topic,
@@ -37,5 +38,6 @@ pub fn lobby_to_game_client(
         initial_hand,
         players_public,
         game_status,
+        host_peer_id,
     )
 }

@@ -91,6 +91,10 @@ impl Client<LobbyClientState> {
         self.state.player_id
     }
 
+    pub fn get_host_peer_id(&self) -> Option<PeerId> {
+        self.state.host_peer_id
+    }
+
     /// run event loop
     /// events = lobby join accept/reject, update, disconnect, error
     pub async fn next_event(&mut self) -> Option<ClientEvent> {

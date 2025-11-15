@@ -106,13 +106,16 @@ impl Host<GameHostState> {
         self.state.game.get_players_public()
     }
 
-    pub fn submit_own_turn(&mut self, selected_cards: HashMap<CardKind, usize>, remaining_hand: HashMap<CardKind, usize>) -> Result<(), String> {
+    pub fn submit_own_turn(&mut self, selected_cards: HashMap<CardKind, usize>, remaining_hand: HashMap<CardKind, usize>) -> Result<bool, String> {
         self.state.game.validate_hand_submission(0, &selected_cards, &remaining_hand)
             .map_err(|e| format!("{:?}", e))?;
         self.state.game.mark_player_selected(0).map_err(|e| format!("{:?}", e))?;
         self.state.turn_submissions.insert(0, (selected_cards, remaining_hand));
         log::host("Host submitted turn".to_string());
-        Ok(())
+
+        // Check if all players have now submitted
+        let all_submitted = self.state.game.all_players_selected();
+        Ok(all_submitted)
     }
 
     // process turn when all players have submitted
@@ -282,7 +285,7 @@ impl crate::tui::GameInterface for Host<GameHostState> {
     }
 
     fn submit_turn(&mut self, selected: HashMap<CardKind, usize>, remaining: HashMap<CardKind, usize>) -> Result<(), String> {
-        self.submit_own_turn(selected, remaining)
+        self.submit_own_turn(selected, remaining).map(|_| ())
     }
 
     fn get_player_id(&self) -> usize {

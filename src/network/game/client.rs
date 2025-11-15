@@ -28,6 +28,7 @@ impl GameClientState {
         hand: HashMap<CardKind, usize>,
         players_public: Vec<PlayerPublic>,
         game_status: GameStatus,
+        host_peer_id: Option<PeerId>,
     ) -> Self {
         Self {
             player_id,
@@ -36,7 +37,7 @@ impl GameClientState {
             game_status,
             selected_cards: HashMap::new(),
             turn_submitted: false,
-            host_peer_id: None,
+            host_peer_id,
         }
     }
 
@@ -130,8 +131,9 @@ impl Client<GameClientState> {
         hand: HashMap<CardKind, usize>,
         players_public: Vec<PlayerPublic>,
         game_status: GameStatus,
+        host_peer_id: Option<PeerId>,
     ) -> Self {
-        let state = GameClientState::new(player_id, hand, players_public, game_status);
+        let state = GameClientState::new(player_id, hand, players_public, game_status, host_peer_id);
         Self {
             swarm,
             state,
