@@ -6,7 +6,7 @@ use libp2p::{
     PeerId,
 };
 
-use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent, ClientRequest, HostResponse};
+use crate::network::behaviour::{BobaGoBehaviour, BobaGoBehaviourEvent, ClientRequest};
 use crate::network::Client;
 use crate::engine::{models::{CardKind, PlayerPublic}, state::{GameStatus, PlayerTurnState}};
 use super::protocol::{GameClientMessage, GameHostMessage, GameEndReason};
