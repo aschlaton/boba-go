@@ -2,11 +2,27 @@ use crossterm::event::KeyCode;
 use std::collections::HashMap;
 use crate::engine::CardKind;
 use crate::tui::{GameView, GameUIState, GameInterface};
+use crate::engine::models::PlayerPublic;
 
 pub enum InputAction {
     Quit,
     SubmitTurn,
     Continue,
+}
+
+fn count_player_cards(player_public: &PlayerPublic) -> usize {
+    let mut count = 0;
+    for (_, card_count) in &player_public.public_cards {
+        if *card_count > 0 {
+            count += 1;
+        }
+    }
+    for (_, card_count) in &player_public.boosted_fruit_teas {
+        if *card_count > 0 {
+            count += 1;
+        }
+    }
+    count
 }
 
 pub fn calculate_max_selections(ui_state: &GameUIState, player_id: usize) -> usize {
@@ -124,17 +140,7 @@ fn handle_up_navigation<G: GameInterface>(game: &G, ui_state: &mut GameUIState) 
             let player_id = game.get_player_id();
             let players_public = game.get_players_public();
             if let Some(player_public) = players_public.get(player_id) {
-                let mut card_count = 0;
-                for (_, count) in &player_public.public_cards {
-                    if *count > 0 {
-                        card_count += 1;
-                    }
-                }
-                for (_, count) in &player_public.boosted_fruit_teas {
-                    if *count > 0 {
-                        card_count += 1;
-                    }
-                }
+                let card_count = count_player_cards(player_public);
                 if card_count > 0 {
                     if ui_state.my_cards_selection_index == 0 {
                         ui_state.my_cards_selection_index = card_count - 1;
@@ -169,17 +175,7 @@ fn handle_down_navigation<G: GameInterface>(game: &G, ui_state: &mut GameUIState
             let player_id = game.get_player_id();
             let players_public = game.get_players_public();
             if let Some(player_public) = players_public.get(player_id) {
-                let mut card_count = 0;
-                for (_, count) in &player_public.public_cards {
-                    if *count > 0 {
-                        card_count += 1;
-                    }
-                }
-                for (_, count) in &player_public.boosted_fruit_teas {
-                    if *count > 0 {
-                        card_count += 1;
-                    }
-                }
+                let card_count = count_player_cards(player_public);
                 if card_count > 0 {
                     ui_state.my_cards_selection_index = (ui_state.my_cards_selection_index + 1) % card_count;
                 }

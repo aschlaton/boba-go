@@ -19,10 +19,8 @@ async fn main() {
             }
         }
         StartAction::HowToPlay => {
-            println!("How to play - TODO");
+            println!("How to play - Coming soon!");
         }
         StartAction::Quit => {}
     }
 }
-
-

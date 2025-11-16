@@ -1,6 +1,7 @@
 use std::io;
 use std::collections::HashMap;
 use crate::engine::{Game, GameConfig, GameError, ScoreBreakdown, PlayerTurnState, CardKind};
+use crate::engine::models::PlayerPublic;
 
 mod views;
 mod network_game;
@@ -10,6 +11,21 @@ mod input;
 pub use network_game::{run_host_game, run_join_game};
 pub use game_ui::{GameView, GameUIState, GameInterface, render_game_ui};
 pub use input::{handle_game_input, calculate_max_selections, InputAction};
+
+fn count_player_cards(player_public: &PlayerPublic) -> usize {
+    let mut count = 0;
+    for (_, card_count) in &player_public.public_cards {
+        if *card_count > 0 {
+            count += 1;
+        }
+    }
+    for (_, card_count) in &player_public.boosted_fruit_teas {
+        if *card_count > 0 {
+            count += 1;
+        }
+    }
+    count
+}
 
 #[derive(Copy, Clone)]
 pub enum StartAction {
@@ -299,11 +315,8 @@ pub fn render_score_breakdown(f: &mut Frame, game: &Game) {
     let mut score_data: Vec<(String, ScoreBreakdown)> = Vec::new();
 
     for player in &players_public {
-        match game.calculate_player_score(player.id) {
-            Ok((_total, breakdown)) => {
-                score_data.push((player.name.clone(), breakdown));
-            }
-            Err(_) => {}
+        if let Ok((_total, breakdown)) = game.calculate_player_score(player.id) {
+            score_data.push((player.name.clone(), breakdown));
         }
     }
 
@@ -438,17 +451,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                 } else if ui_state.current_view == GameView::MyCards {
                                     // Navigate my cards
                                     let player_public = game.get_player_public(current_player_id).unwrap();
-                                    let mut card_count = 0;
-                                    for (_, count) in &player_public.public_cards {
-                                        if *count > 0 {
-                                            card_count += 1;
-                                        }
-                                    }
-                                    for (_, count) in &player_public.boosted_fruit_teas {
-                                        if *count > 0 {
-                                            card_count += 1;
-                                        }
-                                    }
+                                    let card_count = count_player_cards(&player_public);
                                     if card_count > 0 {
                                         if ui_state.my_cards_selection_index == 0 {
                                             ui_state.my_cards_selection_index = card_count - 1;
@@ -479,17 +482,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                 } else if ui_state.current_view == GameView::MyCards {
                                     // Navigate my cards
                                     let player_public = game.get_player_public(current_player_id).unwrap();
-                                    let mut card_count = 0;
-                                    for (_, count) in &player_public.public_cards {
-                                        if *count > 0 {
-                                            card_count += 1;
-                                        }
-                                    }
-                                    for (_, count) in &player_public.boosted_fruit_teas {
-                                        if *count > 0 {
-                                            card_count += 1;
-                                        }
-                                    }
+                                    let card_count = count_player_cards(&player_public);
                                     if card_count > 0 {
                                         ui_state.my_cards_selection_index = (ui_state.my_cards_selection_index + 1) % card_count;
                                     }
@@ -606,7 +599,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                         }
 
                                         // Validate submission
-                                        if let Err(_) = game.validate_hand_submission(current_player_id, &player_selected.0, &remaining_hand) {
+                                        if game.validate_hand_submission(current_player_id, &player_selected.0, &remaining_hand).is_err() {
                                             // Reset selection on validation error
                                             player_selected.0.clear();
                                         } else {
@@ -614,7 +607,7 @@ pub fn run_local_game() -> Result<(), GameError> {
                                             player_selected.1 = remaining_hand;
 
                                             // Mark player as selected
-                                            if let Err(_) = game.mark_player_selected(current_player_id) {
+                                            if game.mark_player_selected(current_player_id).is_err() {
                                                 break Err(GameError::InvalidConfig);
                                             }
 
