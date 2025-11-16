@@ -256,7 +256,6 @@ name = "boba-go"
 version = "0.1.0"
 dependencies = [
  "crossterm",
- "futures",
  "libp2p",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
