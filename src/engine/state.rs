@@ -40,14 +40,14 @@ pub struct GameStatus {
 }
 
 /// Score contribution from a category
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CategoryScore {
     pub category: String,
     pub points: f32,
 }
 
 /// Complete score breakdown for a player
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ScoreBreakdown {
     pub category_scores: Vec<CategoryScore>,
     pub set_bonuses: Vec<SetBonus>,  // For future set-based bonuses
@@ -55,7 +55,7 @@ pub struct ScoreBreakdown {
 }
 
 /// Set bonus (e.g., 3 unique teas = +5)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SetBonus {
     pub description: String,
     pub points: f32,

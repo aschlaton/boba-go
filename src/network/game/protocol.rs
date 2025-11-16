@@ -26,9 +26,8 @@ pub enum GameHostMessage {
         game_status: GameStatus,
     },
 
-    // game ended (either completed or aborted)
     GameEnded {
-        final_scores: Vec<(usize, f32)>, // (player_id, score)
+        final_scores: Vec<(usize, f32, String, crate::engine::ScoreBreakdown)>, // (player_id, score, name, breakdown)
         reason: GameEndReason,
     },
 

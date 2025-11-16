@@ -204,7 +204,7 @@ impl Client<GameClientState> {
 #[derive(Debug)]
 pub enum GameClientEvent {
     GameUpdated { game_status: GameStatus },
-    GameEnded { final_scores: Vec<(usize, f32)>, reason: GameEndReason },
+    GameEnded { final_scores: Vec<(usize, f32, String, crate::engine::ScoreBreakdown)>, reason: GameEndReason },
     Disconnected,
 }
 

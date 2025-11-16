@@ -261,24 +261,9 @@ pub fn run_start_page() -> StartAction {
 }
 
 
-pub fn render_score_breakdown(f: &mut Frame, game: &Game) {
+pub fn render_score_breakdown_data(f: &mut Frame, mut score_data: Vec<(String, ScoreBreakdown)>) {
     let area = f.area();
-    
-    let players_public = game.get_players_public();
-    let mut score_data: Vec<(String, ScoreBreakdown)> = Vec::new();
-    
-    for player in &players_public {
-        match game.calculate_player_score(player.id) {
-            Ok((_total, breakdown)) => {
-                score_data.push((player.name.clone(), breakdown));
-            }
-            Err(_) => {
-                // Skip players with scoring errors
-            }
-        }
-    }
-    
-    // Sort by total score descending
+
     score_data.sort_by(|a, b| b.1.total_score.partial_cmp(&a.1.total_score).unwrap_or(std::cmp::Ordering::Equal));
     
     let mut rows = Vec::new();
@@ -305,8 +290,24 @@ pub fn render_score_breakdown(f: &mut Frame, game: &Game) {
     
     let widths = [Constraint::Length(4), Constraint::Percentage(60), Constraint::Percentage(40)];
     let table = Table::new(rows, widths)
-        .block(Block::default().borders(Borders::ALL).title("Final Scores"));
+        .block(Block::default().borders(Borders::ALL).title("Final Scores - Press Q to exit"));
     f.render_widget(table, area);
+}
+
+pub fn render_score_breakdown(f: &mut Frame, game: &Game) {
+    let players_public = game.get_players_public();
+    let mut score_data: Vec<(String, ScoreBreakdown)> = Vec::new();
+
+    for player in &players_public {
+        match game.calculate_player_score(player.id) {
+            Ok((_total, breakdown)) => {
+                score_data.push((player.name.clone(), breakdown));
+            }
+            Err(_) => {}
+        }
+    }
+
+    render_score_breakdown_data(f, score_data);
 }
 
 pub fn run_local_game() -> Result<(), GameError> {

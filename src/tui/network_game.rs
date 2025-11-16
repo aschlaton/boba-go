@@ -312,6 +312,21 @@ pub async fn run_host_game() -> Result<(), GameError> {
                 }
             }
         }
+
+        let score_data = game_host.get_score_breakdowns();
+        loop {
+            terminal.draw(|f| {
+                super::render_score_breakdown_data(f, score_data.clone());
+            }).ok();
+
+            if event::poll(Duration::from_millis(100)).ok().unwrap_or(false) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == KeyEventKind::Press && (key.code == KeyCode::Char('q') || key.code == KeyCode::Esc) {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     disable_raw_mode().ok();
@@ -534,6 +549,24 @@ pub async fn run_join_game() -> Result<(), GameError> {
                         }
                         GameClientEvent::GameEnded { final_scores, reason } => {
                             crate::log::client(format!("Game ended: {:?}, scores: {:?}", reason, final_scores));
+                            // display score screen
+                            let score_data: Vec<(String, crate::engine::ScoreBreakdown)> = final_scores.iter()
+                                .map(|(_, _, name, breakdown)| (name.clone(), breakdown.clone()))
+                                .collect();
+
+                            loop {
+                                terminal.draw(|f| {
+                                    super::render_score_breakdown_data(f, score_data.clone());
+                                }).ok();
+
+                                if event::poll(Duration::from_millis(100)).ok().unwrap_or(false) {
+                                    if let Ok(Event::Key(key)) = event::read() {
+                                        if key.kind == KeyEventKind::Press && (key.code == KeyCode::Char('q') || key.code == KeyCode::Esc) {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                             break;
                         }
                         GameClientEvent::Disconnected => {

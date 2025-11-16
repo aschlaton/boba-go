@@ -106,6 +106,16 @@ impl Host<GameHostState> {
         self.state.game.get_players_public()
     }
 
+    pub fn get_score_breakdowns(&self) -> Vec<(String, crate::engine::ScoreBreakdown)> {
+        let mut score_data = Vec::new();
+        for player in self.state.game.get_players_public() {
+            if let Ok((_total, breakdown)) = self.state.game.calculate_player_score(player.id) {
+                score_data.push((player.name, breakdown));
+            }
+        }
+        score_data
+    }
+
     pub fn submit_own_turn(&mut self, selected_cards: HashMap<CardKind, usize>, remaining_hand: HashMap<CardKind, usize>) -> Result<bool, String> {
         self.state.game.validate_hand_submission(0, &selected_cards, &remaining_hand)
             .map_err(|e| format!("{:?}", e))?;
@@ -177,9 +187,9 @@ impl Host<GameHostState> {
     fn broadcast_game_ended(&mut self, reason: GameEndReason) -> GameHostEvent {
         let mut final_scores = Vec::new();
 
-        for player_id in 0..self.state.game.num_players() {
-            if let Ok((score, _)) = self.state.game.calculate_player_score(player_id) {
-                final_scores.push((player_id, score));
+        for player in self.state.game.get_players_public() {
+            if let Ok((score, breakdown)) = self.state.game.calculate_player_score(player.id) {
+                final_scores.push((player.id, score, player.name, breakdown));
             }
         }
 
@@ -265,7 +275,7 @@ pub enum GameHostEvent {
     PlayerSubmitted { player_id: usize },
     AllPlayersSubmitted,
     PlayerDisconnected { peer_id: PeerId, player_id: usize },
-    GameEnded { final_scores: Vec<(usize, f32)>, reason: GameEndReason },
+    GameEnded { final_scores: Vec<(usize, f32, String, crate::engine::ScoreBreakdown)>, reason: GameEndReason },
 }
 
 impl crate::tui::GameInterface for Host<GameHostState> {
