@@ -498,7 +498,26 @@ impl Game {
     }
 
     // Public API methods
-    
+
+    /// Activate drink tray for a player
+    pub fn activate_drink_tray(&mut self, player_id: usize) -> Result<(), GameError> {
+        if player_id >= self.players.len() {
+            return Err(GameError::InvalidConfig);
+        }
+
+        let player = &mut self.players[player_id];
+        if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
+            *drink_tray_count -= 1;
+            if *drink_tray_count == 0 {
+                player.public_cards.remove(&CardKind::DrinkTray);
+            }
+            *player.hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
+            Ok(())
+        } else {
+            Err(GameError::InvalidConfig)
+        }
+    }
+
     /// Get current player's hand
     pub fn get_player_hand(&self, player_id: usize) -> Result<&HashMap<CardKind, usize>, GameError> {
         if player_id >= self.players.len() {
@@ -651,5 +670,22 @@ impl<'a> crate::tui::GameInterface for GamePlayerView<'a> {
 
     fn get_player_id(&self) -> usize {
         self.player_id
+    }
+
+    fn activate_drink_tray(&mut self) -> Result<(), String> {
+        if let Some(player) = self.game.players.get_mut(self.player_id) {
+            if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
+                *drink_tray_count -= 1;
+                if *drink_tray_count == 0 {
+                    player.public_cards.remove(&CardKind::DrinkTray);
+                }
+                *player.hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
+                Ok(())
+            } else {
+                Err("No DrinkTray in public cards".to_string())
+            }
+        } else {
+            Err("Invalid player id".to_string())
+        }
     }
 }

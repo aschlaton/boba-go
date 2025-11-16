@@ -14,6 +14,8 @@ pub enum GameClientMessage {
         selected_cards: HashMap<CardKind, usize>,
         remaining_hand: HashMap<CardKind, usize>,
     },
+    // activate drink tray (move from public_cards to hand)
+    ActivateDrinkTray,
 }
 
 // messages from host to client

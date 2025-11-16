@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 const CARDS_PER_PLAYER_DATA: &[(usize, usize)] = &[
-    (2, 1),
-    (3, 1),
-    (4, 1),
-    (5, 1),
+    (2, 10),
+    (3, 9),
+    (4, 8),
+    (5, 7),
 ];
 
 static CARDS_PER_PLAYER: OnceLock<HashMap<usize, usize>> = OnceLock::new();

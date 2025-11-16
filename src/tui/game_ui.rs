@@ -49,6 +49,7 @@ pub trait GameInterface {
     fn get_players_public(&self) -> Vec<PlayerPublic>;
     fn submit_turn(&mut self, selected: HashMap<CardKind, usize>, remaining: HashMap<CardKind, usize>) -> Result<(), String>;
     fn get_player_id(&self) -> usize;
+    fn activate_drink_tray(&mut self) -> Result<(), String>;
 }
 
 use ratatui::{

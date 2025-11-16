@@ -568,20 +568,9 @@ pub fn run_local_game() -> Result<(), GameError> {
 
                                     if !card_list.is_empty() && ui_state.my_cards_selection_index < card_list.len() {
                                         let (card_kind, _, is_boosted) = card_list[ui_state.my_cards_selection_index];
-                                        // Only allow using Drink Tray (not boosted fruit teas)
                                         if card_kind == CardKind::DrinkTray && !is_boosted {
-                                            // Move Drink Tray from public_cards to hand and activate it
-                                            let player = &mut game.players[current_player_id];
-                                            if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
-                                                *drink_tray_count -= 1;
-                                                if *drink_tray_count == 0 {
-                                                    player.public_cards.remove(&CardKind::DrinkTray);
-                                                }
-                                                // Add to hand
-                                                *player.hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
-                                                // Activate Drink Tray for this turn
+                                            if game.activate_drink_tray(current_player_id).is_ok() {
                                                 ui_state.drink_tray_activated.insert(current_player_id, true);
-                                                // Navigate to Hand view
                                                 ui_state.view_history.push(GameView::MyCards);
                                                 ui_state.current_view = GameView::Hand;
                                                 ui_state.hand_selection_index = 0;

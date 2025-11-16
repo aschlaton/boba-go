@@ -217,21 +217,69 @@ impl Host<GameHostState> {
 
         match rr_event {
             request_response::Event::Message { peer, message, .. } => {
-                if let request_response::Message::Request {
-                    request: ClientRequest::Game(GameClientMessage::SubmitTurn { selected_cards, remaining_hand }),
-                    channel,
-                    ..
-                } = message
-                {
-                    let (response, event) = self.process_turn_submission(peer, selected_cards, remaining_hand);
+                match message {
+                    request_response::Message::Request {
+                        request: ClientRequest::Game(game_msg),
+                        channel,
+                        ..
+                    } => {
+                        match game_msg {
+                            GameClientMessage::SubmitTurn { selected_cards, remaining_hand } => {
+                                let (response, event) = self.process_turn_submission(peer, selected_cards, remaining_hand);
+                                self.swarm
+                                    .behaviour_mut()
+                                    .request_response
+                                    .send_response(channel, HostResponse::Game(response))
+                                    .ok();
+                                return event;
+                            }
+                            GameClientMessage::ActivateDrinkTray => {
+                                let player_id = match self.state.get_player_id(&peer) {
+                                    Some(id) => id,
+                                    None => {
+                                        self.swarm
+                                            .behaviour_mut()
+                                            .request_response
+                                            .send_response(channel, HostResponse::Game(GameHostMessage::Error {
+                                                message: "Player not found".to_string(),
+                                            }))
+                                            .ok();
+                                        return None;
+                                    }
+                                };
 
-                    self.swarm
-                        .behaviour_mut()
-                        .request_response
-                        .send_response(channel, HostResponse::Game(response))
-                        .ok();
+                                if let Some(player) = self.state.game.players.get_mut(player_id) {
+                                    if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
+                                        *drink_tray_count -= 1;
+                                        if *drink_tray_count == 0 {
+                                            player.public_cards.remove(&CardKind::DrinkTray);
+                                        }
+                                        *player.hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
 
-                    return event;
+                                        // broadcast update so client gets updated hand
+                                        self.broadcast_game_update();
+
+                                        self.swarm
+                                            .behaviour_mut()
+                                            .request_response
+                                            .send_response(channel, HostResponse::Game(GameHostMessage::Error {
+                                                message: "DrinkTray activated".to_string(),
+                                            }))
+                                            .ok();
+                                    } else {
+                                        self.swarm
+                                            .behaviour_mut()
+                                            .request_response
+                                            .send_response(channel, HostResponse::Game(GameHostMessage::Error {
+                                                message: "No DrinkTray in public cards".to_string(),
+                                            }))
+                                            .ok();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -297,5 +345,22 @@ impl crate::tui::GameInterface for Host<GameHostState> {
 
     fn get_player_id(&self) -> usize {
         0
+    }
+
+    fn activate_drink_tray(&mut self) -> Result<(), String> {
+        if let Some(player) = self.state.game.players.get_mut(0) {
+            if let Some(drink_tray_count) = player.public_cards.get_mut(&CardKind::DrinkTray) {
+                *drink_tray_count -= 1;
+                if *drink_tray_count == 0 {
+                    player.public_cards.remove(&CardKind::DrinkTray);
+                }
+                *player.hand.entry(CardKind::DrinkTray).or_insert(0) += 1;
+                Ok(())
+            } else {
+                Err("No DrinkTray in public cards".to_string())
+            }
+        } else {
+            Err("Invalid player id".to_string())
+        }
     }
 }

@@ -295,10 +295,12 @@ fn handle_drink_tray_activation<G: GameInterface>(game: &mut G, ui_state: &mut G
         if !card_list.is_empty() && ui_state.my_cards_selection_index < card_list.len() {
             let (card_kind, _, is_boosted) = card_list[ui_state.my_cards_selection_index];
             if card_kind == CardKind::DrinkTray && !is_boosted {
-                ui_state.drink_tray_activated.insert(player_id, true);
-                ui_state.view_history.push(GameView::MyCards);
-                ui_state.current_view = GameView::Hand;
-                ui_state.hand_selection_index = 0;
+                if game.activate_drink_tray().is_ok() {
+                    ui_state.drink_tray_activated.insert(player_id, true);
+                    ui_state.view_history.push(GameView::MyCards);
+                    ui_state.current_view = GameView::Hand;
+                    ui_state.hand_selection_index = 0;
+                }
             }
         }
     }

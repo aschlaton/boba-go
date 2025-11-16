@@ -234,5 +234,19 @@ impl crate::tui::GameInterface for Client<GameClientState> {
     fn get_player_id(&self) -> usize {
         self.state.player_id
     }
+
+    fn activate_drink_tray(&mut self) -> Result<(), String> {
+        if let Some(host_peer) = self.state.host_peer_id {
+            let message = ClientRequest::Game(GameClientMessage::ActivateDrinkTray);
+            self.swarm
+                .behaviour_mut()
+                .request_response
+                .send_request(&host_peer, message);
+            log::client("Sent DrinkTray activation request to host".to_string());
+            Ok(())
+        } else {
+            Err("No host connected".to_string())
+        }
+    }
 }
 
