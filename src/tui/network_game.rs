@@ -360,16 +360,16 @@ pub async fn run_join_game() -> Result<(), GameError> {
                 .split(area);
 
             let prompt = if input_phase == 0 {
-                "Enter your name:"
-            } else {
                 "Enter host address (e.g., /ip4/127.0.0.1/tcp/12345):"
+            } else {
+                "Enter your name:"
             };
             let prompt_para = Paragraph::new(prompt)
                 .alignment(Alignment::Center)
                 .block(Block::default().borders(Borders::ALL));
             f.render_widget(prompt_para, chunks[0]);
 
-            let current_input = if input_phase == 0 { &player_name } else { &host_address };
+            let current_input = if input_phase == 0 { &host_address } else { &player_name };
             let input_display = if current_input.is_empty() {
                 "_".to_string()
             } else {
@@ -392,17 +392,17 @@ pub async fn run_join_game() -> Result<(), GameError> {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char(c) => {
-                            let current = if input_phase == 0 { &mut player_name } else { &mut host_address };
+                            let current = if input_phase == 0 { &mut host_address } else { &mut player_name };
                             if current.len() < 50 {
                                 current.push(c);
                             }
                         }
                         KeyCode::Backspace => {
-                            let current = if input_phase == 0 { &mut player_name } else { &mut host_address };
+                            let current = if input_phase == 0 { &mut host_address } else { &mut player_name };
                             current.pop();
                         }
                         KeyCode::Enter => {
-                            let current = if input_phase == 0 { &player_name } else { &host_address };
+                            let current = if input_phase == 0 { &host_address } else { &player_name };
                             if !current.is_empty() {
                                 if input_phase == 0 {
                                     input_phase = 1;
