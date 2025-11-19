@@ -1,5 +1,7 @@
+![Boba-Go](docs/screenshot.png)
+
 # boba-go
-libp2p card game based on [sushi-go](https://www.amazon.com/Sushi-Go-Pick-Pass-Card/dp/B00J57VU44) with ratatui rendering. Thanks to [this repo](https://github.com/kaichaosun/rust-libp2p-examples) for help with libp2p networking. 
+libp2p card game based on [sushi-go](https://www.amazon.com/Sushi-Go-Pick-Pass-Card/dp/B00J57VU44) with ratatui rendering. Thanks to [this repo](https://github.com/kaichaosun/rust-libp2p-examples) for help with libp2p networking and [this ASCII art generator](https://patorjk.com/software/taag/) for title ascii art. 
 
 ## Run
 ```bash
